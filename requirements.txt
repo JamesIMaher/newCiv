@@ -1,0 +1,2 @@
+--only-binary=pygame
+pygame>=2.6.0
