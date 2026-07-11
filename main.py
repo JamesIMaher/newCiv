@@ -1,39 +1,21 @@
 import pygame
 import sys
+import grid 
+from Screen.screen import Screen
 
 pygame.init()
 
 SCREEN_WIDTH = pygame.display.Info().current_w / 2
 SCREEN_HEIGHT = pygame.display.Info().current_h - 80
+GAME_TITLE = "New Civilization"
+GRID_SIZE = (70, 50)
 FPS = 60
-BLACK = (0, 0, 0)
-BALL_SPEED = [2, 2]
-
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("newCiv")
-clock = pygame.time.Clock()
 
 def main():
-    ball = pygame.image.load("intro_ball.gif")
-    ballrect = ball.get_rect()
-
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-
-        ballrect = ballrect.move(BALL_SPEED)
-        if ballrect.left < 0 or ballrect.right > SCREEN_WIDTH:
-            BALL_SPEED[0] = -BALL_SPEED[0]
-        if ballrect.top < 0 or ballrect.bottom > SCREEN_HEIGHT:
-            BALL_SPEED[1] = -BALL_SPEED[1]
-
-        screen.fill(BLACK)
-        screen.blit(ball, ballrect)
-
-        pygame.display.flip()
-        clock.tick(FPS)
+    #Initialize the pygame display
+    game_screen = Screen(SCREEN_WIDTH, SCREEN_HEIGHT, GAME_TITLE)
+    game_grid = grid.Grid(SCREEN_WIDTH, SCREEN_HEIGHT, GRID_SIZE)
+    game_grid.draw_grid_terrain(game_screen)
 
 if __name__ == "__main__":
     main()
