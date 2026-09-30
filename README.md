@@ -26,7 +26,7 @@ python tools/simulate.py --seed 3 --turns 300 --ai 4   # all-AI game, prints pro
 
 | System | Summary |
 | --- | --- |
-| **Planet** | Procedural cylinder map (wraps east–west) with elevation, rainfall (arid/moist/rainy), rockiness (flat/rolling/rocky), ocean shelf, xenofungus, resource specials and supply pods. Three map sizes. |
+| **Planet** | Isometric diamond map in the Alpha Centauri style (hill-shaded rust soils, magenta xenofungus, teal seas; wraps east–west) with elevation, rainfall (arid/moist/rainy), rockiness (flat/rolling/rocky), ocean shelf, xenofungus, resource specials and supply pods. Three map sizes. |
 | **Factions** | 7 original factions with bonuses and AI personalities: Concordant Assembly, Helix Institute, Verdant Covenant, Iron Directorate, Meridian Consortium, Luminous Order, Tidewater Collective. |
 | **Bases** | Population, nutrients/growth, minerals/production, energy. Citizens are auto-assigned to the 21-tile radius by a governor focus (balanced/growth/production/energy). Drones and riots, population caps, unit support costs, inefficiency by distance from HQ, rush-buying, energy stockpiling. |
 | **Economy** | Energy is split between Economy / Psych / Labs sliders. Facilities have upkeep. Early "planetary restrictions" cap tile yields at 2 until the right techs. |

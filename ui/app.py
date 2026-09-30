@@ -27,6 +27,7 @@ ACTION_TIPS = {
     "Wait": "Skip to the next unit for now and come back to this one later this turn.",
     "Skip": "This unit does nothing this turn.",
     "Disband": "Permanently remove this unit. Frees its home base from paying its upkeep.",
+    "Next unit": "Jump to the next unit that is waiting for orders.",
 }
 from .renderer import MapView
 from .widgets import UI, Button
@@ -35,12 +36,16 @@ TOP_H = 34
 SIDE_W = 290
 SAVE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "saves")
 
+# Screen directions on the diamond grid. Up/Down/Left/Right move to the corner-touching neighbours
+# (straight up, down, left, right on screen); the diagonals move across the diamond edges.
 MOVE_KEYS = {
-    pygame.K_UP: (0, -1), pygame.K_DOWN: (0, 1), pygame.K_LEFT: (-1, 0), pygame.K_RIGHT: (1, 0),
-    pygame.K_KP8: (0, -1), pygame.K_KP2: (0, 1), pygame.K_KP4: (-1, 0), pygame.K_KP6: (1, 0),
-    pygame.K_KP7: (-1, -1), pygame.K_KP9: (1, -1), pygame.K_KP1: (-1, 1), pygame.K_KP3: (1, 1),
-    pygame.K_HOME: (-1, -1), pygame.K_PAGEUP: (1, -1), pygame.K_END: (-1, 1), pygame.K_PAGEDOWN: (1, 1),
+    pygame.K_UP: "N", pygame.K_DOWN: "S", pygame.K_LEFT: "W", pygame.K_RIGHT: "E",
+    pygame.K_KP8: "N", pygame.K_KP2: "S", pygame.K_KP4: "W", pygame.K_KP6: "E",
+    pygame.K_KP7: "NW", pygame.K_KP9: "NE", pygame.K_KP1: "SW", pygame.K_KP3: "SE",
+    pygame.K_HOME: "NW", pygame.K_PAGEUP: "NE", pygame.K_END: "SW", pygame.K_PAGEDOWN: "SE",
 }
+PAN_VECTORS = {"N": (0, 1), "S": (0, -1), "W": (1, 0), "E": (-1, 0),
+               "NW": (1, 1), "NE": (-1, 1), "SW": (1, -1), "SE": (-1, -1)}
 
 
 class App:
@@ -206,12 +211,16 @@ class App:
             self.game._winner_shown = True
             self.open_dialog(GameOverDialog(self))
 
-    def move_selected(self, dx, dy):
+    def move_selected(self, direction):
         u = self.selected
         if not u or u.id not in self.game.units:
             return
         u.orders = None if u.orders in ("goto", "explore", "auto", "fortify", "sentry") else u.orders
-        res = self.game.move_unit(u, u.x + dx, u.y + dy)
+        dest = self.game.world.step(u.x, u.y, direction)
+        if dest is None:
+            self.show_toast("That's the edge of the world.", theme.WARN)
+            return
+        res = self.game.move_unit(u, *dest)
         if res.startswith("blocked"):
             self.show_toast(res.split(":", 1)[1].capitalize(), theme.WARN)
             if u.moves_left <= 0:
@@ -233,6 +242,9 @@ class App:
         self.selected = None
         self.open_base(b)
         self._after_action()
+        waiting = len(self.game.units_needing_orders(self.game.human_id))
+        if waiting:
+            self.show_toast(f"{b.name} founded. {waiting} unit(s) still await orders - Tab cycles through them.")
 
     def act_fortify(self):
         if self.selected:
@@ -443,12 +455,12 @@ class App:
             return
         u = self.selected
         if key in MOVE_KEYS:
-            dx, dy = MOVE_KEYS[key]
+            direction = MOVE_KEYS[key]
             if u and u.id in self.game.units:
-                self.move_selected(dx, dy)
+                self.move_selected(direction)
             else:
-                z = self.view.z
-                self.view.pan(-dx * z * 3, -dy * z * 3)
+                px, py = PAN_VECTORS[direction]
+                self.view.pan(px * self.view.tw * 2, py * self.view.tw)
             return
         if not u or u.id not in self.game.units:
             return
@@ -621,11 +633,7 @@ class App:
         if u and u.id in game.units:
             y = self._unit_panel(surf, u, x, y)
         else:
-            pending = len(game.units_needing_orders(game.human_id))
-            theme.text(surf, "No unit selected", (x, y), 20, theme.TEXT_DIM)
-            y += 22
-            theme.text(surf, f"{pending} unit(s) awaiting orders", (x, y), 18, theme.TEXT_DIM)
-            y += 26
+            y = self._pending_panel(surf, x, y)
         # Tile info
         tile = self.hover_tile or ((u.x, u.y) if u else None)
         end_y = h - 60
@@ -637,6 +645,28 @@ class App:
         pulse = ready and (ticks // 500) % 2 == 0
         label = "End Turn  [Enter]" if ready else f"End Turn ({len(pending)} waiting)"
         self.ui.button(surf, (x0 + 10, h - 50, SIDE_W - 20, 40), label, self.end_turn, selected=pulse, size=22)
+
+    def _pending_panel(self, surf, x, y):
+        """List of units still waiting for orders, each clickable."""
+        game = self.game
+        pending = game.units_needing_orders(game.human_id)
+        if not pending:
+            theme.text(surf, "All units have orders.", (x, y), 19, theme.GOOD)
+            y += 22
+            theme.text(surf, "Press Enter to end the turn.", (x, y), 17, theme.TEXT_DIM)
+            return y + 26
+        theme.text(surf, f"{len(pending)} unit(s) awaiting orders", (x, y), 19, theme.ACCENT, bold=True)
+        y += 24
+        for u in pending[:8]:
+            b = game.base_at(u.x, u.y)
+            where = f"in {b.name}" if b else f"at ({u.x},{u.y})"
+            self.ui.button(surf, (x - 2, y, SIDE_W - 24, 24), f"{u.name}  {where}", lambda u=u: self.select_unit(u),
+                           size=17, tooltip=describe.unit_tooltip(u.type) + "\nClick to select it.")
+            y += 27
+        if len(pending) > 8:
+            theme.text(surf, f"... and {len(pending) - 8} more (Tab)", (x, y), 16, theme.TEXT_DIM)
+            y += 20
+        return y + 6
 
     def _unit_panel(self, surf, u, x, y):
         game = self.game
@@ -679,7 +709,7 @@ class App:
         acts += [("Fortify [H]", self.act_fortify, True), ("Sentry [L]", self.act_sentry, True),
                  ("Explore [E]", self.act_explore, True), ("Go to [G]", self.act_goto_mode, True),
                  ("Wait [W]", self.act_wait, True), ("Skip [Space]", self.act_skip, True),
-                 ("Disband [Del]", self.act_disband, True)]
+                 ("Disband [Del]", self.act_disband, True), ("Next unit [Tab]", self.select_next, True)]
         bw = (SIDE_W - 30) // 2
         for i, (label, cb, en) in enumerate(acts):
             bx = x - 2 + (i % 2) * (bw + 6)

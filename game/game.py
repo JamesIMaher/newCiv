@@ -19,7 +19,8 @@ LANDING_NUTRIENTS = 1
 SIGHT_UNIT = 2
 SIGHT_BASE = 3
 
-MAP_SIZES = {"small": (48, 32), "standard": (64, 40), "large": (84, 52)}
+# (columns, rows). Rows are half a tile tall on the diamond grid, so a map is about 4*cols/rows wide:tall.
+MAP_SIZES = {"small": (36, 60), "standard": (46, 76), "large": (58, 96)}
 
 
 class Game:

@@ -337,7 +337,7 @@ def _valid_site(game, pid, x, y):
         return False
     if t.owner is not None and t.owner != pid:
         return False
-    if y < 2 or y >= game.world.height - 2:
+    if y < 3 or y >= game.world.height - 3:
         return False
     for b in game.bases.values():
         if game.world.distance(b.x, b.y, x, y) < 3:

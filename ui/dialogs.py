@@ -5,7 +5,7 @@ from game import lore
 from game.data import TECHS, UNITS, FACILITIES, PROJECTS, TERRAFORMS, FACTIONS, ERAS
 from game.victory import VICTORY_CONDITIONS
 from . import describe, theme
-from .renderer import draw_tile
+from .renderer import diamond, draw_base, draw_roads, tile_sprite
 
 
 def draw_info(surf, rect, info):
@@ -225,48 +225,51 @@ class BaseDialog(Dialog):
         y += 8
         theme.text(surf, f"Population limit: {rep['pop_cap']}", (x, y), 17, theme.TEXT_DIM)
 
-        # --- Centre: base map -------------------------------------------------
-        z = 46
+        # --- Centre: base map (isometric, the 21-tile work radius) --------------
+        tw = 64
+        cw = 4 * tw + 8  # the work radius is 4 diamonds wide and 2 tall
         mx = r.x + 16 + colw + 10
         my = r.y + 52
         world = game.world
-        pygame.draw.rect(surf, (0, 0, 0), (mx - 2, my - 2, 5 * z + 4, 5 * z + 4))
+        area = pygame.Rect(mx - 2, my - 2, cw + 4, 2 * tw + 12)
+        pygame.draw.rect(surf, (4, 6, 10), area)
+        pygame.draw.rect(surf, theme.PANEL_BORDER, area, 1)
+        ccx, ccy = mx + cw / 2, my + tw + 4
         worked = set(b.worked)
-        for dy in range(-2, 3):
-            for dx in range(-2, 3):
-                tx, ty = (b.x + dx) % world.width, b.y + dy
-                px, py = mx + (dx + 2) * z, my + (dy + 2) * z
-                if not world.in_bounds(tx, ty) or (abs(dx) == 2 and abs(dy) == 2):
-                    pygame.draw.rect(surf, (8, 8, 8), (px, py, z, z))
-                    continue
-                t = world.tiles[tx][ty]
-                if not game.is_explored(b.owner, tx, ty):
-                    pygame.draw.rect(surf, (0, 0, 0), (px, py, z, z))
-                    continue
-                draw_tile(surf, world, t, px, py, z, game.base_pos)
-                ty_ = game.tile_yield(t, b.owner, (tx, ty) == (b.x, b.y))
-                status = "base tile" if (tx, ty) == (b.x, b.y) else "worked" if (tx, ty) in worked else "not worked"
-                ui.hotspot((px, py, z, z), f"{t.terrain_name()} ({status})\n"
-                                           f"{ty_[0]} nutrients, {ty_[1]} minerals, {ty_[2]} energy\n"
-                                           f"{describe.best_use_hint(t)}")
-                if (tx, ty) == (b.x, b.y):
-                    pygame.draw.rect(surf, p.color, (px + 8, py + 8, z - 16, z - 16), border_radius=5)
-                    n, m, e = game.tile_yield(t, b.owner, True)
-                    self._yields(surf, px, py, z, n, m, e)
-                elif (tx, ty) in worked:
-                    n, m, e = game.tile_yield(t, b.owner)
-                    pygame.draw.rect(surf, (255, 255, 255), (px, py, z, z), 2)
-                    self._yields(surf, px, py, z, n, m, e)
-                else:
-                    s = pygame.Surface((z, z), pygame.SRCALPHA)
-                    s.fill((0, 0, 0, 80))
-                    surf.blit(s, (px, py))
-                    if t.owner is not None and t.owner != b.owner:
-                        pygame.draw.line(surf, (200, 60, 60), (px + 4, py + 4), (px + z - 4, py + z - 4), 2)
-        fy = my + 5 * z + 10
+        cells = []
+        for tx, ty in world.base_radius(b.x, b.y):
+            cells.append((ty - b.y, world.dx2(b.x, b.y, tx, ty), tx, ty))
+        dim = pygame.Surface((tw, tw // 2), pygame.SRCALPHA)
+        pygame.draw.polygon(dim, (0, 0, 0, 110), diamond(tw / 2, tw / 4, tw))
+        for ddy, ddx2, tx, ty in sorted(cells):
+            cx, cy = ccx + ddx2 * tw / 2, ccy + ddy * tw / 4
+            t = world.tiles[tx][ty]
+            if not game.is_explored(b.owner, tx, ty):
+                pygame.draw.polygon(surf, (0, 0, 0), diamond(cx, cy, tw))
+                continue
+            surf.blit(tile_sprite(world, t, tw), (cx - tw / 2, cy - tw / 4))
+            draw_roads(surf, world, t, cx, cy, tw, game.base_pos)
+            is_base = (tx, ty) == (b.x, b.y)
+            ty_ = game.tile_yield(t, b.owner, is_base)
+            status = "base tile" if is_base else "worked" if (tx, ty) in worked else "not worked"
+            ui.hotspot((cx - tw / 4, cy - tw / 8, tw / 2, tw / 4), f"{t.terrain_name()} ({status})\n"
+                                                                    f"{ty_[0]} nutrients, {ty_[1]} minerals, {ty_[2]} energy\n"
+                                                                    f"{describe.best_use_hint(t)}")
+            if is_base:
+                draw_base(surf, game, b, cx, cy - tw / 10, tw, label=False)
+                self._yields(surf, cx, cy, tw, *ty_)
+            elif (tx, ty) in worked:
+                pygame.draw.polygon(surf, (255, 255, 255), diamond(cx, cy, tw, 2), 2)
+                self._yields(surf, cx, cy, tw, *ty_)
+            else:
+                surf.blit(dim, (cx - tw / 2, cy - tw / 4))
+                if t.owner is not None and t.owner != b.owner:
+                    pygame.draw.line(surf, (220, 60, 60), (cx - 6, cy - 3), (cx + 6, cy + 3), 2)
+                    pygame.draw.line(surf, (220, 60, 60), (cx - 6, cy + 3), (cx + 6, cy - 3), 2)
+        fy = my + 2 * tw + 22
         theme.text(surf, "Governor focus", (mx, fy), 18, theme.TEXT_DIM)
         fy += 20
-        bw = (5 * z) // 2 - 3
+        bw = cw // 2 - 3
         for i, (key, label) in enumerate((("balanced", "Balanced"), ("growth", "Growth"),
                                            ("production", "Production"), ("energy", "Energy"))):
             bx = mx + (i % 2) * (bw + 6)
@@ -274,7 +277,7 @@ class BaseDialog(Dialog):
             ui.button(surf, (bx, by, bw, 26), label, lambda k=key: self.set_focus(k), selected=b.focus == key, size=18)
 
         # --- Right: production --------------------------------------------------
-        px0 = mx + 5 * z + 20
+        px0 = mx + cw + 20
         pw = r.right - px0 - 16
         py0 = r.y + 50
         theme.text(surf, "Production", (px0, py0), 22, theme.ACCENT, bold=True)
@@ -361,16 +364,17 @@ class BaseDialog(Dialog):
         supported = sum(1 for u in game.units.values() if u.home == b.id)
         theme.text(surf, f"Supports {supported} unit(s)", (ux + 160, r.bottom - 118), 16, theme.TEXT_DIM)
 
-    def _yields(self, surf, px, py, z, n, m, e):
+    def _yields(self, surf, cx, cy, tw, n, m, e):
         f = theme.font(15, True)
-        bg = pygame.Surface((z - 2, 15), pygame.SRCALPHA)
-        bg.fill((0, 0, 0, 180))
-        surf.blit(bg, (px + 1, py + z - 16))
-        x = px + 2
+        w = 48
+        bg = pygame.Surface((w, 13), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 175))
+        surf.blit(bg, (cx - w / 2, cy + 1))
+        x = cx - w / 2 + 2
         for kind, val in (("nutrients", n), ("minerals", m), ("energy", e)):
-            theme.resource_icon(surf, kind, (x + 4, py + z - 9), 4)
-            surf.blit(f.render(str(val), True, theme.RESOURCE_COLORS[kind]), (x + 8, py + z - 16))
-            x += (z - 2) // 3
+            theme.resource_icon(surf, kind, (int(x + 3), int(cy + 7)), 3)
+            surf.blit(f.render(str(val), True, theme.RESOURCE_COLORS[kind]), (x + 7, cy + 1))
+            x += w / 3
 
     def activate(self, u):
         self.app.select_unit(u)

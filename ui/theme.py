@@ -1,23 +1,23 @@
 """Colours, fonts and small drawing helpers shared by the UI."""
 import pygame
 
-BG = (12, 16, 22)
-PANEL = (22, 30, 40)
-PANEL_LIGHT = (34, 46, 60)
-PANEL_BORDER = (70, 110, 120)
+BG = (8, 12, 12)
+PANEL = (18, 26, 24)
+PANEL_LIGHT = (28, 42, 38)
+PANEL_BORDER = (86, 168, 112)
 TEXT = (220, 230, 225)
 TEXT_DIM = (140, 155, 150)
-ACCENT = (110, 210, 170)
+ACCENT = (132, 232, 150)
 WARN = (235, 120, 90)
 GOOD = (120, 220, 120)
 GOLD = (240, 210, 110)
 NUTRIENT = (120, 210, 90)
 MINERAL = (170, 170, 200)
 ENERGY = (240, 210, 80)
-BUTTON = (40, 62, 72)
-BUTTON_HOVER = (58, 92, 104)
+BUTTON = (32, 56, 48)
+BUTTON_HOVER = (48, 88, 70)
 BUTTON_DISABLED = (34, 40, 46)
-BUTTON_SELECTED = (60, 120, 100)
+BUTTON_SELECTED = (58, 128, 84)
 
 _fonts = {}
 
@@ -82,6 +82,9 @@ def panel(surf, rect, color=PANEL, border=PANEL_BORDER, alpha=None, radius=6):
         pygame.draw.rect(surf, color, rect, border_radius=radius)
     if border:
         pygame.draw.rect(surf, border, rect, 1, border_radius=radius)
+        if rect.width > 40 and rect.height > 40:
+            # bevelled inner trim, in the style of the classic interface
+            pygame.draw.rect(surf, shade(border, -45), rect.inflate(-6, -6), 1, border_radius=max(0, radius - 2))
 
 
 def bar(surf, rect, frac, color, back=(40, 45, 50)):
