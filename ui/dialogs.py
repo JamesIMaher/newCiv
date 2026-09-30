@@ -732,6 +732,50 @@ class TradeDialog(Dialog):
             self.result = f"{leader} refuses: \"{why}\""
 
 
+class EventDialog(Dialog):
+    """Pop-ups for notable events (supply pods and the like), with a button to go and look."""
+    width, height = 620, 300
+
+    @property
+    def title(self):
+        return self.game.events[0]["title"] if self.game.events else ""
+
+    def draw(self, surf, ui):
+        game = self.game
+        if not game.events:
+            self.close()
+            return
+        ev = game.events[0]
+        r = self.frame(surf, ui)
+        theme.text_block(surf, ev["text"], (r.x + 24, r.y + 56, r.width - 48, 150), 20, theme.TEXT)
+        if ev.get("pos"):
+            label = "Show me the unit" if ev.get("unit") in game.units else "Show me"
+            ui.button(surf, (r.x + 24, r.bottom - 56, 190, 38), label, self.show)
+        ui.button(surf, (r.right - 174, r.bottom - 56, 150, 38), "OK", self.next)
+        if len(game.events) > 1:
+            theme.text(surf, f"{len(game.events) - 1} more", (r.x + 234, r.bottom - 46), 17, theme.TEXT_DIM)
+
+    def show(self):
+        ev = self.game.events[0]
+        u = self.game.units.get(ev.get("unit"))
+        if u:
+            self.app.select_unit(u)
+        self.app.view.center_on(*ev["pos"])
+        self.next()
+
+    def next(self):
+        if self.game.events:
+            self.game.events.pop(0)
+        if not self.game.events:
+            self.close()
+
+    def on_key(self, event):
+        if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+            self.next()
+            return True
+        return False
+
+
 class ProposalDialog(Dialog):
     """Offers from AI factions that need the player's answer."""
     width, height = 640, 320

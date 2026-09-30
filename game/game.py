@@ -42,6 +42,7 @@ class Game:
         self.dirty_tiles = set()  # tiles whose appearance changed (for the renderer)
         self.human_id = None
         self.proposals = []      # offers from AI factions awaiting the human's answer
+        self.events = []         # notable things that happened to the human, shown as pop-ups
 
         self.players.append(Player(NATIVE_ID, None, False, w, h))
         others = [f.id for f in FACTION_LIST if f.id != human_faction]
@@ -529,6 +530,7 @@ class Game:
     def __setstate__(self, state):
         self.__dict__.update(state)
         self.__dict__.setdefault("proposals", [])
+        self.__dict__.setdefault("events", [])
 
     def declare_war(self, a, b):
         pa, pb = self.players[a], self.players[b]
@@ -733,29 +735,33 @@ class Game:
         rng = self.rng
         roll = rng.random()
         pos = (tile.x, tile.y)
+        new_unit = None
         if roll < 0.35:
             amt = rng.randint(20, 60)
             p.credits += amt
-            self.notify(p.id, f"Supply pod: {amt} energy credits recovered.", pos)
+            text = f"The crate holds sealed energy cells: {amt} credits recovered."
         elif roll < 0.45 and self.available_techs(p.id):
             tech = rng.choice(self.available_techs(p.id))
             self.grant_tech(p.id, tech.id, source="Supply pod data banks")
+            text = f"The crate's data banks hold research notes: you learn {tech.name}!"
         elif roll < 0.6:
             utype = rng.choice(["former", "scout", "colony_pod"])
-            self._create_unit(utype, p.id, tile.x, tile.y)
-            self.notify(p.id, f"Supply pod: a stranded {UNITS[utype].name} joins your faction!", pos)
+            new_unit = self._create_unit(utype, p.id, tile.x, tile.y)
+            text = (f"Survivors! The crate was a lifeboat from the colony ship. A stranded {UNITS[utype].name} "
+                    f"crew joins your faction here. It has no home base, so it costs no upkeep.")
         elif roll < 0.75:
             self.reveal(p.id, tile.x, tile.y, 6)
-            self.notify(p.id, "Supply pod: satellite maps reveal the surrounding area.", pos)
+            self.dirty_tiles.add(pos)
+            text = "The crate holds a working map uplink: the surrounding region is revealed."
         elif roll < 0.88:
             bases = self.player_bases(p.id)
             if bases:
                 b = min(bases, key=lambda b: self.world.distance(b.x, b.y, tile.x, tile.y))
                 b.minerals += 25
-                self.notify(p.id, f"Supply pod: 25 minerals shipped to {b.name}.", pos)
+                text = f"The crate is full of salvageable alloys: 25 minerals are shipped to {b.name}."
             else:
                 p.credits += 25
-                self.notify(p.id, "Supply pod: 25 energy credits recovered.", pos)
+                text = "The crate is full of salvage worth 25 credits."
         else:
             spots = [(nx, ny) for nx, ny in self.world.neighbors(tile.x, tile.y)
                      if self.world.tiles[nx][ny].is_land and not self.unit_pos.get((nx, ny))
@@ -763,10 +769,15 @@ class Game:
             if spots:
                 sx, sy = rng.choice(spots)
                 self._create_unit("xenoworm", NATIVE_ID, sx, sy)
-                self.notify(p.id, "Supply pod: the pod was a nest! Xenoworms emerge!", pos)
+                text = "The crate was overgrown by a xenoworm nest. Worms boil out of it!"
             else:
                 p.credits += 10
-                self.notify(p.id, "Supply pod: 10 energy credits recovered.", pos)
+                text = "The crate was mostly empty: 10 credits recovered."
+        self.notify(p.id, f"Supply pod: {text}", pos)
+        if p.is_human:
+            self.events.append({"kind": "pod", "title": "Supply Pod Opened",
+                                "text": f"Your {unit.name} opened a supply pod from the colony ship. {text}",
+                                "pos": pos, "unit": new_unit.id if new_unit else None})
 
     # ------------------------------------------------------------------
     # Combat

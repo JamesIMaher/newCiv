@@ -90,8 +90,10 @@ SPECIALS = {
     "mineral": ("Mineral Bonus", "An exposed ore vein. +2 minerals."),
     "energy": ("Energy Bonus", "A geothermal vent or crystal field. +2 energy."),
     "supply_pod": ("Supply Pod", "A crate that fell from the colony ship during planetfall. Move a unit onto it "
-                                 "to find credits, a technology, a lost unit, maps or minerals. It might also "
-                                 "hold something alive."),
+                                 "to open it and find credits, a technology, maps, minerals, or a lifeboat of "
+                                 "survivors: a Colony Pod, Former or Scout that joins you on the spot, free of "
+                                 "upkeep. Some crates have been taken over by xenoworms. Units on Explore open "
+                                 "crates automatically, and a pop-up tells you what they found."),
 }
 
 IMPROVEMENTS = {

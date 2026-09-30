@@ -316,3 +316,16 @@ def test_ai_wars_capture_bases():
         if g.winner:
             break
     assert any("captured" in m[2] or "destroyed" in m[2] for m in g.log)
+
+
+def test_supply_pod_unit_is_announced(game):
+    clear_units(game)
+    flatten(game, 10, 10)
+    game.world.tiles[11][10].supply_pod = True
+    scout = game._create_unit("scout", game.human_id, 10, 10)
+    game.rng.random = lambda: 0.5          # the "stranded unit" outcome
+    assert game.move_unit(scout, 11, 10) == "moved"
+    ev = game.events[-1]
+    assert ev["kind"] == "pod" and ev["unit"] in game.units
+    new = game.units[ev["unit"]]
+    assert (new.x, new.y) == (11, 10) and new.owner == game.human_id

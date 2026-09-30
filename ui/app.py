@@ -15,7 +15,7 @@ from game import lore
 from . import describe
 from .dialogs import (BaseDialog, TechDialog, EconomyDialog, DiplomacyDialog, StatusDialog, HelpDialog,
                       GameMenuDialog, GameOverDialog, LoadDialog, DatalinksDialog, DiscoveryDialog,
-                      ProposalDialog)
+                      ProposalDialog, EventDialog)
 
 ACTION_TIPS = {
     "Found Base": "Turn this Colony Pod into a new base on this tile. Bases must be at least 3 tiles apart and "
@@ -202,10 +202,15 @@ class App:
             pending.sort(key=lambda u: game.world.distance(u.x, u.y, s.x, s.y))
         self.select_unit(pending[0])
 
+    def show_events(self):
+        if self.game and self.game.events and not any(isinstance(d, EventDialog) for d in self.dialogs):
+            self.open_dialog(EventDialog(self))
+
     def _after_action(self):
         u = self.selected
         if u is None or u.id not in self.game.units or u.moves_left <= 0 or u.orders:
             self.select_next()
+        self.show_events()
         self._check_game_over()
 
     def _check_game_over(self):
@@ -352,6 +357,7 @@ class App:
             self.open_dialog(DiscoveryDialog(self, new_techs, new_projects))
         if game.proposals:
             self.open_dialog(ProposalDialog(self))
+        self.show_events()
         self.show_toast(f"Mission Year {game.year}")
         self._check_game_over()
 
