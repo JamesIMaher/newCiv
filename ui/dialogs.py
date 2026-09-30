@@ -1,7 +1,7 @@
 """Modal windows: base screen, research, economy, diplomacy, status, help and menus."""
 import pygame
 
-from game import diplomacy, lore
+from game import diplomacy, lore, society
 from game.data import TECHS, UNITS, FACILITIES, PROJECTS, TERRAFORMS, FACTIONS, ERAS
 from game.victory import VICTORY_CONDITIONS
 from . import describe, theme
@@ -615,6 +615,12 @@ class DiplomacyDialog(Dialog):
             if lead and lead[0] == p.id:
                 info += f"   LEADING: {lead[1]} {int(lead[2] * 100)}%"
             theme.text(surf, info, (rr.x + 18, rr.y + 50), 16, theme.GOLD if lead and lead[0] == p.id else theme.TEXT_DIM)
+            op = society.ideology_opinion(p, me)
+            fav, opp = society.IDEOLOGY.get(p.faction_id, (None, None))
+            if op:
+                itxt = (f"They approve of your {society.MODELS[fav].name} society" if op > 0
+                        else f"They despise your {society.MODELS[opp].name} ways")
+                theme.text(surf, itxt, (rr.x + 290, rr.y + 50), 16, theme.GOOD if op > 0 else theme.WARN)
             mems = diplomacy.memories_about(game, p.id, me.id, 2)
             if mems:
                 txt = "They remember: " + "; ".join(f"you {m[2]} (M.Y. {game.year - (game.turn - m[0])})"
@@ -730,6 +736,91 @@ class TradeDialog(Dialog):
             self.offer = None
         else:
             self.result = f"{leader} refuses: \"{why}\""
+
+
+class SocietyDialog(Dialog):
+    """Social engineering: choose how your faction governs itself."""
+    width, height = 1100, 690
+    title = "Society - Social Engineering"
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.pending = dict(app.game.human.social)
+        self.result = ""
+
+    def draw(self, surf, ui):
+        r = self.frame(surf, ui)
+        game = self.game
+        p = game.human
+        colw = (r.width - 40) // 4
+        top = r.y + 48
+        fav, opp = society.IDEOLOGY.get(p.faction_id, (None, None))
+        theme.text(surf, f"Your people favour {society.MODELS[fav].name} and distrust {society.MODELS[opp].name}. "
+                         "Other factions warm to societies like their own.", (r.x + 16, top), 17, theme.TEXT_DIM)
+        top += 26
+        for ci, (cat, cname) in enumerate(society.CATEGORIES):
+            x = r.x + 16 + ci * colw
+            theme.text(surf, cname, (x, top), 22, theme.ACCENT, bold=True)
+            y = top + 28
+            for m in [m for m in society.MODEL_LIST if m.category == cat]:
+                ok = society.available(game, p.id, m.id)
+                card = pygame.Rect(x, y, colw - 12, 100)
+                chosen = self.pending[cat] == m.id
+                current = p.social[cat] == m.id
+                tip = m.text + (f"\n{m.quote[0]} - {m.quote[1]}" if m.quote else "")
+                ui.button(surf, card, "", lambda c=cat, i=m.id: self.pending.__setitem__(c, i), enabled=ok,
+                          selected=chosen, tooltip=tip)
+                theme.text(surf, m.name, (card.x + 8, card.y + 6), 20, theme.TEXT if ok else theme.TEXT_DIM, bold=True)
+                tag = "current" if current else ("champion" if m.id == fav else "opposed" if m.id == opp else "")
+                if tag:
+                    theme.text(surf, tag, (card.right - 8, card.y + 8), 15,
+                               theme.GOLD if tag == "current" else theme.GOOD if tag == "champion" else theme.WARN,
+                               right=True)
+                ey = card.y + 28
+                if not ok:
+                    theme.text(surf, f"Requires {TECHS[m.prereq].name}", (card.x + 8, ey), 15, theme.WARN)
+                    ey += 18
+                elif not m.effects:
+                    theme.text(surf, "No effects", (card.x + 8, ey), 16, theme.TEXT_DIM)
+                for i, (k, v) in enumerate(sorted(m.effects.items(), key=lambda kv: -kv[1])):
+                    col = theme.GOOD if v > 0 else theme.WARN
+                    if not ok:
+                        col = theme.shade(col, -70)
+                    theme.text(surf, f"{v:+d} {society.FACTORS[k][0]}", (card.x + 8 + (i % 2) * (colw // 2 - 6),
+                                                                         ey + (i // 2) * 18), 16, col, bold=True)
+                y += 106
+        # Totals, before -> after
+        by = r.bottom - 118
+        pygame.draw.line(surf, theme.PANEL_BORDER, (r.x + 16, by - 8), (r.right - 16, by - 8))
+        theme.text(surf, "Social factors", (r.x + 16, by), 20, theme.ACCENT, bold=True)
+        before = society.factors(game, p)
+        saved = p.social
+        p.social = self.pending
+        after = society.factors(game, p)
+        p.social = saved
+        x = r.x + 16
+        y = by + 26
+        for i, (k, (name, desc)) in enumerate(society.FACTORS.items()):
+            cx = x + (i % 6) * 176
+            cy = y + (i // 6) * 24
+            a, b = before[k], after[k]
+            col = theme.GOOD if b > 0 else theme.WARN if b < 0 else theme.TEXT_DIM
+            label = f"{name} {b:+d}" + (f" (was {a:+d})" if a != b else "")
+            rr = theme.text(surf, label, (cx, cy), 17, col, bold=a != b)
+            ui.hotspot(rr, f"{name}: {desc}")
+        changes = {c: m for c, m in self.pending.items() if p.social[c] != m}
+        cost = society.switch_cost(game, p.id, changes)
+        label = f"Reorganise ({cost} credits)" if changes else "No changes"
+        ui.button(surf, (r.right - 250, r.bottom - 50, 230, 36), label, self.apply,
+                  enabled=bool(changes) and cost <= p.credits,
+                  tooltip="Upheaval costs credits: more bases and more changes cost more.")
+        if self.result:
+            theme.text(surf, self.result, (r.x + 16, r.bottom - 40), 18, theme.GOLD)
+
+    def apply(self):
+        changes = {c: m for c, m in self.pending.items() if self.game.human.social[c] != m}
+        if society.apply(self.game, self.game.human_id, changes):
+            self.result = "Your society has been reorganised."
 
 
 class EventDialog(Dialog):
@@ -911,6 +1002,22 @@ def datalinks_entries():
     for f in FACTIONS.values():
         facts.append(_entry(f.name, f"Faction - led by {f.leader}", f.description, lore.FACTION_LORE.get(f.id, "")))
     cats["Factions"] = facts
+    soc = [_entry("Social Engineering", "Guide", body=lore.SOCIETY_GUIDE)]
+    for name, desc in society.FACTORS.values():
+        soc.append(_entry(name, "Social factor", body=desc))
+    for m in society.MODEL_LIST:
+        eff = ", ".join(f"{v:+d} {society.FACTORS[k][0]}" for k, v in m.effects.items()) or "No effects"
+        req = f"Requires {TECHS[m.prereq].name}" if m.prereq else "Available from the start"
+        champions = [FACTIONS[f].name for f, (fav, _) in society.IDEOLOGY.items() if fav == m.id]
+        opposers = [FACTIONS[f].name for f, (_, opp) in society.IDEOLOGY.items() if opp == m.id]
+        body = m.text
+        if champions:
+            body += "\nChampioned by: " + ", ".join(champions)
+        if opposers:
+            body += "\nOpposed by: " + ", ".join(opposers)
+        soc.append(_entry(m.name, f"Society - {dict(society.CATEGORIES)[m.category]}", f"{eff}\n{req}", body,
+                          quote=m.quote))
+    cats["Society"] = soc
     return cats
 
 
@@ -977,7 +1084,7 @@ UNIT ORDERS: B found base (Colony Pod) | H hold/fortify | L sentry | Space skip 
 
 FORMERS: F farm | M mine | S solar collector | R road | N plant forest | X remove fungus | A automate.
 
-SCREENS: F1 help | F2 energy allocation & base list | F3 research | F4 diplomacy | F5 status | F6 Datalinks encyclopedia (everything explained) | Esc menu | Enter end turn. Ctrl+S quicksave, Ctrl+L quickload.
+SCREENS: F1 help | F2 energy allocation & base list | F3 research | F4 diplomacy | F5 status | F6 Datalinks encyclopedia (everything explained) | F7 society (government and values) | Esc menu | Enter end turn. Ctrl+S quicksave, Ctrl+L quickload.
 
 TIPS: Bases need defenders - native Xenoworms roam the fungus. Tiles yield Nutrients (growth), Minerals (production) and Energy (credits, psych, labs). Bases larger than 4 produce drones; if drones outnumber the other citizens the base riots. Move energy to Psych or build Recreation Commons to keep order. Early on, no tile can produce more than 2 of any resource - Gene Splicing, Ecological Engineering and Environmental Economics lift those limits."""
 

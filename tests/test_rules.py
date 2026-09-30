@@ -329,3 +329,44 @@ def test_supply_pod_unit_is_announced(game):
     assert ev["kind"] == "pod" and ev["unit"] in game.units
     new = game.units[ev["unit"]]
     assert (new.x, new.y) == (11, 10) and new.owner == game.human_id
+
+
+def test_society_models_change_the_rules(game):
+    from game import society
+    p = game.human
+    clear_units(game)
+    flatten(game, 10, 10)
+    pod = game._create_unit("colony_pod", p.id, 10, 10)
+    base = game.found_base(pod)
+    base.pop = 4
+    before = game.growth_threshold(base)
+    p.techs |= {"ethical_calculus", "planetary_networks"}
+    p.credits = 500
+    assert society.apply(game, p.id, {"politics": "democratic", "values": "knowledge"})
+    assert p.social["politics"] == "democratic" and p.credits < 500
+    f = society.factors(game, p)
+    assert f["growth"] == 2 and f["research"] == 2 and f["support"] == -2
+    assert game.growth_threshold(base) < before
+
+
+def test_society_needs_the_tech(game):
+    from game import society
+    assert not society.available(game, game.human_id, "cybernetic")
+    game.players[1].credits = 1000
+    society.apply(game, 1, {"future": "cybernetic"})
+    assert game.players[1].social["future"] == "none"
+
+
+def test_ideology_sways_attitude(game):
+    from game import diplomacy
+    concord = next(p for p in game.players if p.faction_id == "concord")
+    others = [p for p in game.players[1:] if p.id != concord.id]
+    other = others[0]
+    game.make_contact(concord.id, other.id)
+    other.social["politics"] = "democratic"
+    fav, _ = __import__("game.society", fromlist=["IDEOLOGY"]).IDEOLOGY["concord"]
+    assert fav == "democratic"
+    start = diplomacy.attitude(game, concord.id, other.id)
+    for _ in range(10):
+        diplomacy.update(game)
+    assert diplomacy.attitude(game, concord.id, other.id) > start

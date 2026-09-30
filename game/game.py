@@ -1,7 +1,7 @@
 """The rules engine. Pure Python - no pygame - so it can be tested and simulated headless."""
 import random
 
-from . import ai, diplomacy
+from . import ai, diplomacy, society
 from .data import TECHS, UNITS, FACILITIES, PROJECTS, TERRAFORMS, FACTIONS, FACTION_LIST, ERAS
 from .entities import Player, Base, Unit, MOVE_POINTS, MAX_HP, NATIVE_ID
 from .pathfinding import find_path
@@ -291,7 +291,9 @@ class Game:
 
     def growth_threshold(self, base):
         # Cheap early growth, steeper for big bases: 10, 18, 26, 36, 46 ... 186 at size 14.
-        return 4 + 6 * base.pop + base.pop * base.pop // 2
+        base_cost = 4 + 6 * base.pop + base.pop * base.pop // 2
+        growth = society.factors(self, self.players[base.owner])["growth"]
+        return max(4, int(base_cost * max(0.5, 1 - 0.1 * growth)))
 
     def workable_tiles(self, base):
         taken = set()
@@ -354,26 +356,27 @@ class Game:
             m += LANDING_MINERALS
 
         supported = [u for u in self.units.values() if u.home == base.id]
-        free = FREE_SUPPORT + (1 if p.bonus("police") else 0)
+        sf = society.factors(self, p)
+        free = max(0, FREE_SUPPORT + (1 if p.bonus("police") else 0) + sf["support"])
         support = max(0, len(supported) - free)
         m_net = max(0, m - support)
         m_pct = sum(FACILITIES[f].minerals_pct for f in base.facilities)
-        m_net = m_net * (100 + m_pct) // 100
+        m_net = m_net * (100 + m_pct + 10 * sf["industry"]) // 100
 
         # Inefficiency: energy lost with distance from headquarters.
         hq = self.bases.get(p.hq_base)
         dist = world.distance(base.x, base.y, hq.x, hq.y) if hq else 20
-        loss = int(e * min(0.5, dist / 36))
+        loss = int(e * min(0.5, dist / (36 * max(0.3, 1 + 0.25 * sf["efficiency"]))))
         e_net = e - loss
         a_econ, a_psych, _a_labs = p.alloc
         econ = e_net * a_econ // 10
         psych = e_net * a_psych // 10
         labs = e_net - econ - psych
 
-        econ_pct = sum(FACILITIES[f].econ_pct for f in base.facilities) + p.bonus("econ_pct")
+        econ_pct = sum(FACILITIES[f].econ_pct for f in base.facilities) + p.bonus("econ_pct") + 10 * sf["economy"]
         if self.has_project(p.id, "planetary_exchange"):
             econ_pct += 25
-        labs_pct = sum(FACILITIES[f].labs_pct for f in base.facilities) + p.bonus("labs_pct")
+        labs_pct = sum(FACILITIES[f].labs_pct for f in base.facilities) + p.bonus("labs_pct") + 10 * sf["research"]
         if self.has_project(p.id, "cyber_sanctum"):
             labs_pct += 25
         psych_pct = sum(FACILITIES[f].psych_pct for f in base.facilities)
@@ -383,13 +386,13 @@ class Game:
 
         # Drones (unhappy citizens).
         num_bases = sum(1 for b in self.bases.values() if b.owner == p.id)
-        content = CONTENT_BASE + p.bonus("content") - max(0, (num_bases - 8) // 4)
+        content = CONTENT_BASE + p.bonus("content") + sf["content"] - max(0, (num_bases - 8) // 4)
         drones = max(0, base.pop - max(0, content))
         drones += sum(FACILITIES[f].drones for f in base.facilities)
         if self.has_project(p.id, "genome_archive"):
             drones -= 1
         police_units = sum(1 for u in self.units_at(base.x, base.y) if u.owner == p.id and u.type.military)
-        drones -= min(police_units, 1 + p.bonus("police"))
+        drones -= min(police_units, max(0, 1 + p.bonus("police") + sf["police"]))
         drones -= psych // 2
         drones = max(0, min(base.pop, drones))
         rioting = drones * 2 > base.pop and drones > 0 and base.pop > 1
@@ -792,7 +795,7 @@ class Game:
         base = self.base_at(x, y)
         if psi:
             s = (unit.type.attack if attacking else unit.type.defense) if unit.type.native else 2.0
-            pct = p.bonus("psi_pct")
+            pct = p.bonus("psi_pct") + 15 * society.factors(self, p)["planet"]
             if self.has_project(p.id, "empath_council"):
                 pct += 50
             s *= 1 + pct / 100
@@ -814,6 +817,8 @@ class Game:
                     mult += 1.0
             mult += p.bonus("defense_pct") / 100
             s *= mult
+        if not unit.type.native:
+            s *= max(0.5, 1 + 0.1 * society.factors(self, p)["morale"])
         return s * self._morale_mult(unit)
 
     def best_defender(self, attacker, x, y):

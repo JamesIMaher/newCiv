@@ -3,7 +3,7 @@
 The AI is intentionally straightforward: expand, develop, defend, and attack when it
 feels strong. It uses the same public rules API as the human player.
 """
-from . import ai_military, diplomacy
+from . import ai_military, diplomacy, society
 from .data import UNITS, FACILITIES, PROJECTS, TECHS
 from .entities import MOVE_POINTS, NATIVE_ID
 from .pathfinding import find_path, reachable
@@ -166,6 +166,8 @@ def take_turn(game, p):
     labs = min(10 - psych, int(4 + sci * 3))
     p.alloc = [10 - psych - labs, psych, labs]
 
+    if game.turn % 5 == p.id % 5:
+        society.ai_choose(game, p)
     ai_military.plan_wars(game, p)
     diplomacy.ai_diplomacy(game, p)
 

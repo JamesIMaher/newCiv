@@ -28,12 +28,15 @@ class Player:
         self.ai_state = {}
         self.attitude = {}      # pid -> -100..100, how this faction feels about them
         self.memory = []        # (turn, pid, what they did, attitude change)
+        self.social = {"politics": "frontier", "economics": "simple", "values": "survival", "future": "none"}
 
     def __setstate__(self, state):
         # Saves from older versions lack newer fields.
         self.__dict__.update(state)
         self.__dict__.setdefault("attitude", {})
         self.__dict__.setdefault("memory", [])
+        self.__dict__.setdefault("social", {"politics": "frontier", "economics": "simple",
+                                            "values": "survival", "future": "none"})
 
     @property
     def faction(self):

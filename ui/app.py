@@ -15,7 +15,7 @@ from game import lore
 from . import describe
 from .dialogs import (BaseDialog, TechDialog, EconomyDialog, DiplomacyDialog, StatusDialog, HelpDialog,
                       GameMenuDialog, GameOverDialog, LoadDialog, DatalinksDialog, DiscoveryDialog,
-                      ProposalDialog, EventDialog)
+                      ProposalDialog, EventDialog, SocietyDialog)
 
 ACTION_TIPS = {
     "Found Base": "Turn this Colony Pod into a new base on this tile. Bases must be at least 3 tiles apart and "
@@ -461,7 +461,7 @@ class App:
             self.end_turn()
             return
         fkeys = {pygame.K_F1: HelpDialog, pygame.K_F2: EconomyDialog, pygame.K_F3: TechDialog,
-                 pygame.K_F6: DatalinksDialog,
+                 pygame.K_F6: DatalinksDialog, pygame.K_F7: SocietyDialog,
                  pygame.K_F4: DiplomacyDialog, pygame.K_F5: StatusDialog}
         if key in fkeys:
             self.open_dialog(fkeys[key](self))
@@ -580,6 +580,7 @@ class App:
         for label, cb, tip in reversed((
                 ("Research", lambda: self.open_dialog(TechDialog(self)), "Choose research (F3)"),
                 ("Energy", lambda: self.open_dialog(EconomyDialog(self)), "Energy allocation and base list (F2)"),
+                ("Society", lambda: self.open_dialog(SocietyDialog(self)), "Choose how your faction governs itself (F7)"),
                 ("Diplomacy", lambda: self.open_dialog(DiplomacyDialog(self)), "Relations with other factions (F4)"),
                 ("Status", lambda: self.open_dialog(StatusDialog(self)), "Scores and victory conditions (F5)"),
                 ("Datalinks", lambda: self.open_dialog(DatalinksDialog(self)),

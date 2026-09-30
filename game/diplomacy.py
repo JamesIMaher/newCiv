@@ -6,6 +6,7 @@ does. AI decisions (war, peace, pacts, trades) all read from it.
 """
 from .data import TECHS
 from .entities import NATIVE_ID
+from .society import ideology_opinion
 
 ATTITUDE_WORDS = [(50, "Friendly", (120, 220, 120)), (15, "Cordial", (170, 220, 140)),
                   (-15, "Neutral", (200, 200, 190)), (-50, "Wary", (230, 180, 90)),
@@ -90,6 +91,10 @@ def update(game):
             rel = p.relations[o_id]
             if rel == "pact":
                 v += 0.4
+            # Ideology: factions warm to societies built like their own, and resent their opposites.
+            op = ideology_opinion(p, o)
+            if op and (-40 < v < 40):
+                v += 0.35 * op
             # Common enemies bring factions together.
             for third, r in p.relations.items():
                 if third != o_id and r == "war" and o.relations.get(third) == "war":

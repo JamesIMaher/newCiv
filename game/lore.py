@@ -476,3 +476,17 @@ CONCEPTS = [
      "(Economic and cultural victories, and a much longer game that continues past reaching the stars, are "
      "planned. See docs/DESIGN.md.)"),
 ]
+
+
+SOCIETY_GUIDE = (
+    "How your faction governs itself matters as much as where it builds. On the Society screen (F7) you choose a "
+    "model in each of four categories: Politics, Economics, Values and, late in the game, Future Society. Each "
+    "model raises some social factors and lowers others. There is no best choice, only trade-offs that suit "
+    "your situation: Police State for a faction at war, Democratic for a growing peaceful one, Knowledge for a "
+    "research race.\n\n"
+    "New models unlock with technology. Changing costs credits, because reorganising a society causes "
+    "upheaval, and the cost grows with the number of bases.\n\n"
+    "Every faction champions one model and opposes another. Factions warm to societies built like their own "
+    "and grow cold towards their opposites. The coming cultural victory builds on this: the more factions "
+    "share your ideology, the stronger your influence."
+)
