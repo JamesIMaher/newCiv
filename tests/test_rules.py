@@ -217,3 +217,32 @@ def test_ai_only_game_runs(game):
     assert alive
     assert sum(len(g.player_bases(p.id)) for p in alive) >= len(alive) * 2
     assert all(len(p.techs) >= 3 for p in alive)
+
+
+def test_every_game_object_has_lore():
+    from game import lore
+    from game.data import UNITS, FACILITIES, PROJECTS, TECHS, FACTIONS, TERRAFORMS
+    assert set(UNITS) <= set(lore.UNITS)
+    assert set(FACILITIES) <= set(lore.FACILITIES)
+    assert set(PROJECTS) <= set(lore.PROJECTS)
+    assert set(TECHS) <= set(lore.TECH_QUOTES)
+    assert set(FACTIONS) <= set(lore.FACTION_LORE)
+    assert set(TERRAFORMS) <= set(lore.IMPROVEMENTS)
+
+
+def test_descriptions_build_for_everything(game):
+    from ui import describe
+    from ui.dialogs import datalinks_entries
+    from game.data import UNITS, FACILITIES, PROJECTS, TECHS
+    pod = next(u for u in game.player_units(game.human_id) if u.type.colony)
+    base = game.found_base(pod)
+    items = ([("unit", u) for u in UNITS if not UNITS[u].native] + [("facility", f) for f in FACILITIES] +
+             [("project", p) for p in PROJECTS] + [("special", "stockpile")])
+    for item in items:
+        info = describe.item_info(game, base, item)
+        assert info["title"] and info["body"]
+    for t in TECHS:
+        assert describe.tech_text(t)["name"]
+    for t in game.world.all_tiles():
+        assert describe.tile_description(t)
+    assert all(entries for entries in datalinks_entries().values())

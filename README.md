@@ -37,6 +37,7 @@ python tools/simulate.py --seed 3 --turns 300 --ai 4   # all-AI game, prints pro
 | **Diplomacy** | Contact, peace, and war. AI factions declare war based on aggression and relative strength, and consider peace offers. |
 | **Secret projects** | 8 world wonders, including the Ascension Engine. |
 | **Victory** | Conquest or Transcendence (research *Transcendence* and complete the *Ascension Engine*). Victory conditions are pluggable (`game/victory.py`). |
+| **Learning the world** | Datalinks encyclopedia (F6) covering rules, resources, terrain, units, facilities, projects, techs and factions. Tooltips on most things; resources shown as leaf/crystal/bolt icons with names. The base screen explains what each option would do *in that base*. Discovery pop-ups include flavour quotes. |
 | **UI** | Scrollable/zoomable map with fog of war and territory borders, minimap, unit panel, base screen, research, energy/base list, diplomacy, status, help. Go-to path preview (hold Shift or right mouse). Save/load (quicksave + autosave every 10 turns). |
 
 ## Controls
@@ -49,7 +50,7 @@ python tools/simulate.py --seed 3 --turns 300 --ai 4   # all-AI game, prints pro
 | Pan / zoom | Drag the map, mouse wheel, `+`/`-`, click the minimap |
 | Unit orders | `B` found base · `H` fortify · `L` sentry · `Space` skip · `W` wait · `E` explore · `C` centre · `Tab` next unit · `Del` disband |
 | Former orders | `F` farm · `M` mine · `S` solar · `R` road · `N` forest · `X` remove fungus · `A` automate |
-| Screens | `F1` help · `F2` energy & bases · `F3` research · `F4` diplomacy · `F5` status · `Esc` menu |
+| Screens | `F1` help · `F2` energy & bases · `F3` research · `F4` diplomacy · `F5` status · `F6` Datalinks encyclopedia · `Esc` menu |
 | Turn / files | `Enter` end turn · `Ctrl+S` quicksave · `Ctrl+L` quickload |
 
 ## Code layout
@@ -59,13 +60,14 @@ main.py            entry point
 Screen/screen.py   pygame display setup
 game/              rules engine; no pygame, fully testable headless
   data.py          techs, units, facilities, projects, factions (pure data - rebalance here)
+  lore.py          world text: descriptions, advice, flavour quotes, faction histories, rules guide
   world.py         map, tiles, procedural generation
   entities.py      Player, Base, Unit
   game.py          the rules: yields, growth, production, movement, combat, research, turn processing
   ai.py            computer players, native life, and automation for human units
   pathfinding.py   A* / flood fill on the wrapped map
   victory.py       pluggable victory conditions
-ui/                pygame front-end (app loop, map renderer, dialogs, widgets)
+ui/                pygame front-end (app loop, map renderer, dialogs, widgets; describe.py builds tooltips/info text)
 tests/             pytest suite for the rules engine
 tools/simulate.py  headless all-AI games for balancing
 ```

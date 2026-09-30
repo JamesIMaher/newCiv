@@ -1,40 +1,61 @@
 """Modal windows: base screen, research, economy, diplomacy, status, help and menus."""
 import pygame
 
+from game import lore
 from game.data import TECHS, UNITS, FACILITIES, PROJECTS, TERRAFORMS, FACTIONS, ERAS
 from game.victory import VICTORY_CONDITIONS
-from . import theme
+from . import describe, theme
 from .renderer import draw_tile
 
 
-def unlocks(tech_id):
-    out = []
-    out += [f"Unit: {u.name}" for u in UNITS.values() if u.prereq == tech_id]
-    out += [f"Facility: {f.name}" for f in FACILITIES.values() if f.prereq == tech_id]
-    out += [f"Project: {p.name}" for p in PROJECTS.values() if p.prereq == tech_id]
-    out += [f"Terraform: {t.name}" for t in TERRAFORMS.values() if t.prereq == tech_id]
-    return out
+def draw_info(surf, rect, info):
+    """Render an item_info() dict into rect, clipping at the bottom."""
+    x, y, w, h = rect
+    bottom = y + h
+    theme.panel(surf, (x - 8, y - 6, w + 16, h + 12), (16, 22, 30), theme.PANEL_BORDER)
+
+    def line(txt, size, color, bold=False, indent=0):
+        nonlocal y
+        lh = theme.font(size).get_linesize()
+        for ln in theme.wrap(txt, size, w - indent):
+            if y + lh > bottom:
+                return False
+            theme.text(surf, ln, (x + indent, y), size, color, bold)
+            y += lh
+        return True
+
+    line(info["title"], 22, theme.GOLD if "project" in info["kind"].lower() else theme.TEXT, True)
+    line(info["kind"], 16, theme.ACCENT)
+    if info["stats"]:
+        line(info["stats"], 16, theme.TEXT_DIM)
+    y += 4
+    for para in info["body"].split("\n"):
+        if para and not line(para, 17, theme.TEXT):
+            return
+    for pro in info["pros"]:
+        if not line("+ " + pro, 16, theme.GOOD, indent=4):
+            return
+    for con in info["cons"]:
+        if not line("- " + con, 16, theme.WARN, indent=4):
+            return
+    if info["here"]:
+        y += 2
+        if not line(info["here"], 16, (140, 200, 250)):
+            return
+    if info["quote"]:
+        y += 6
+        q, who = info["quote"]
+        if line(q, 16, (190, 185, 160)):
+            line("- " + who, 15, theme.TEXT_DIM, indent=20)
 
 
-def item_description(item):
-    kind, iid = item
-    if kind == "unit":
-        u = UNITS[iid]
-        extra = ""
-        if u.colony:
-            extra = " Founds a new base (uses 1 population)."
-        elif u.former:
-            extra = " Terraforms land."
-        elif u.capacity:
-            extra = f" Carries {u.capacity} land units."
-        return f"{u.name}: attack {u.attack}, defense {u.defense}, moves {u.moves}{' (sea)' if u.domain == 'sea' else ''}.{extra}"
-    if kind == "facility":
-        f = FACILITIES[iid]
-        return f"{f.name}: {f.description} Upkeep {f.upkeep}."
-    if kind == "project":
-        p = PROJECTS[iid]
-        return f"Secret project - {p.name}: {p.description}"
-    return "Converts this base's minerals into energy credits each turn."
+def draw_quote(surf, quote, rect, size=17):
+    if not quote:
+        return rect[1]
+    q, who = quote
+    y = theme.text_block(surf, q, rect, size, (190, 185, 160))
+    theme.text(surf, "- " + who, (rect[0] + 20, y), size - 2, theme.TEXT_DIM)
+    return y + 20
 
 
 class Dialog:
@@ -143,17 +164,27 @@ class BaseDialog(Dialog):
             gtxt = "STARVING"
         else:
             gtxt = "stagnant"
-        theme.text(surf, f"Nutrients  {rep['nutrients']}  ({surplus:+d})", (x, y), 20, theme.NUTRIENT)
+        theme.resource_icon(surf, "nutrients", (x + 7, y + 7), 7)
+        rr = theme.text(surf, f"Nutrients {rep['nutrients']}   eaten {b.pop * 2}   surplus {surplus:+d}",
+                        (x + 20, y), 20, theme.NUTRIENT)
+        ui.hotspot(pygame.Rect(x, y, rr.right - x, 20), lore.RESOURCES["nutrients"]["text"])
         y += 20
         theme.bar(surf, (x, y, colw - 20, 10), b.nutrients / max(1, grow), theme.NUTRIENT)
         y += 13
         theme.text(surf, f"{b.nutrients}/{grow}, {gtxt}", (x, y), 17, theme.TEXT_DIM)
         y += 24
-        theme.text(surf, f"Minerals  {rep['minerals']}  (net {rep['minerals_net']})", (x, y), 20, theme.MINERAL)
+        theme.resource_icon(surf, "minerals", (x + 7, y + 7), 7)
+        rr = theme.text(surf, f"Minerals {rep['minerals']}   to production {rep['minerals_net']}",
+                        (x + 20, y), 20, theme.MINERAL)
+        ui.hotspot(pygame.Rect(x, y, rr.right - x, 20), lore.RESOURCES["minerals"]["text"])
         y += 20
-        theme.text(surf, f"Unit support cost: {rep['support']}", (x, y), 17, theme.TEXT_DIM)
+        theme.text(surf, f"Unit support cost: {rep['support']}" + ("  (riot: nothing built!)" if rep["rioting"] else ""),
+                   (x, y), 17, theme.TEXT_DIM)
         y += 24
-        theme.text(surf, f"Energy  {rep['energy']}  (inefficiency -{rep['inefficiency']})", (x, y), 20, theme.ENERGY)
+        theme.resource_icon(surf, "energy", (x + 7, y + 7), 7)
+        rr = theme.text(surf, f"Energy {rep['energy']}   lost to distance {rep['inefficiency']}",
+                        (x + 20, y), 20, theme.ENERGY)
+        ui.hotspot(pygame.Rect(x, y, rr.right - x, 20), lore.RESOURCES["energy"]["text"])
         y += 20
         theme.text(surf, f"Economy {rep['econ']}   Psych {rep['psych']}   Labs {rep['labs']}", (x, y), 17, theme.TEXT_DIM)
         y += 18
@@ -175,6 +206,9 @@ class BaseDialog(Dialog):
                 cx = x
                 y += 20
         y += 24
+        ui.hotspot(pygame.Rect(x, y - 24, colw, 22),
+                   "Green: workers on tiles. Blue: specialists (no free tile to work; each makes 2 energy). "
+                   "Red: drones (unhappy). If drones are more than half the population, the base riots.")
         theme.text(surf, f"{drones} drone(s), {b.specialists} specialist(s)", (x, y), 17, theme.TEXT_DIM)
         y += 18
         if rep["rioting"]:
@@ -204,6 +238,11 @@ class BaseDialog(Dialog):
                     pygame.draw.rect(surf, (0, 0, 0), (px, py, z, z))
                     continue
                 draw_tile(surf, world, t, px, py, z, game.base_pos)
+                ty_ = game.tile_yield(t, b.owner, (tx, ty) == (b.x, b.y))
+                status = "base tile" if (tx, ty) == (b.x, b.y) else "worked" if (tx, ty) in worked else "not worked"
+                ui.hotspot((px, py, z, z), f"{t.terrain_name()} ({status})\n"
+                                           f"{ty_[0]} nutrients, {ty_[1]} minerals, {ty_[2]} energy\n"
+                                           f"{describe.best_use_hint(t)}")
                 if (tx, ty) == (b.x, b.y):
                     pygame.draw.rect(surf, p.color, (px + 8, py + 8, z - 16, z - 16), border_radius=5)
                     n, m, e = game.tile_yield(t, b.owner, True)
@@ -251,7 +290,7 @@ class BaseDialog(Dialog):
         theme.text(surf, "Change production:", (px0, py0), 18, theme.TEXT_DIM)
         py0 += 20
         opts = game.production_options(b)
-        list_h = r.bottom - 150 - py0
+        list_h = r.bottom - 262 - py0
         row_h = 25
         visible = max(1, list_h // row_h)
         self.scroll = min(self.scroll, max(0, len(opts) - visible))
@@ -264,10 +303,13 @@ class BaseDialog(Dialog):
             label = game.item_name(opt)
             c = game.item_cost(opt)
             t = game.turns_to_complete(b, opt) if kind != "special" else 0
-            tag = {"unit": "U", "facility": "F", "project": "P", "special": "$"}[kind]
-            txt = f"[{tag}] {label}"
+            tag, tcol = {"unit": ("UNIT", (90, 150, 200)), "facility": ("BLDG", (110, 170, 110)),
+                         "project": ("WNDR", (200, 170, 70)), "special": ("CRED", (200, 180, 80))}[kind]
             ui.button(surf, rr, "", lambda o=opt: self.set_prod(o), selected=opt == b.production)
-            theme.text(surf, txt, (rr.x + 6, rr.y + 4), 18,
+            chip = pygame.Rect(rr.x + 4, rr.y + 4, 40, rr.height - 8)
+            pygame.draw.rect(surf, tcol, chip, border_radius=3)
+            theme.text(surf, tag, chip.center, 14, (10, 12, 14), bold=True, center=True)
+            theme.text(surf, label, (rr.x + 50, rr.y + 4), 18,
                        theme.GOLD if kind == "project" else theme.TEXT)
             if kind != "special":
                 theme.text(surf, f"{c}  ({t if t < 999 else '--'}t)", (rr.right - 6, rr.y + 4), 17, theme.TEXT_DIM, right=True)
@@ -277,7 +319,7 @@ class BaseDialog(Dialog):
             theme.text(surf, f"scroll for more ({self.scroll + 1}-{min(len(opts), self.scroll + visible)} of {len(opts)})",
                        (px0, py0 + visible * row_h), 15, theme.TEXT_DIM)
         desc_item = self.hover_item or b.production
-        theme.text_block(surf, item_description(desc_item), (px0, r.bottom - 124, pw, 60), 17, theme.TEXT)
+        draw_info(surf, (px0 + 8, r.bottom - 236, pw - 16, 222), describe.item_info(game, b, desc_item))
 
         # --- Bottom: facilities and units -----------------------------------------
         by0 = fy + 70
@@ -288,8 +330,12 @@ class BaseDialog(Dialog):
         names = [FACILITIES[f].name for f in facs] + [f"* {n}" for n in projs]
         if not names:
             names = ["(none)"]
+        tips = [f"{FACILITIES[f].description} Upkeep {FACILITIES[f].upkeep}." for f in facs] + \
+               [PROJECTS[k].description for k, v in game.projects_built.items() if v == b.id]
         for i, n in enumerate(names[:9]):
-            theme.text(surf, n, (mx, by0 + i * 18), 17, theme.GOLD if n.startswith("*") else theme.TEXT)
+            rr = theme.text(surf, n, (mx, by0 + i * 18), 17, theme.GOLD if n.startswith("*") else theme.TEXT)
+            if i < len(tips):
+                ui.hotspot(rr, tips[i])
         if len(names) > 9:
             theme.text(surf, f"... and {len(names) - 9} more", (mx, by0 + 9 * 18), 17, theme.TEXT_DIM)
 
@@ -305,22 +351,20 @@ class BaseDialog(Dialog):
             byy = uy + (i // 2) * 28
             ui.button(surf, (bx, byy, 144, 25), f"{u.name}", lambda u=u: self.activate(u),
                       enabled=u.owner == b.owner, size=16,
-                      tooltip=f"{u.name} ({u.morale_name}) {u.type.attack}/{u.type.defense}/{u.type.moves} - click to activate")
+                      tooltip=f"{describe.unit_tooltip(u.type)}\nMorale: {u.morale_name}. Click to give it orders.")
         supported = sum(1 for u in game.units.values() if u.home == b.id)
         theme.text(surf, f"Supports {supported} unit(s)", (ux + 160, r.bottom - 118), 16, theme.TEXT_DIM)
 
     def _yields(self, surf, px, py, z, n, m, e):
-        s = 12
-        f = theme.font(s + 4, True)
-        items = [(n, theme.NUTRIENT), (m, theme.MINERAL), (e, theme.ENERGY)]
-        x = px + 3
-        bg = pygame.Surface((z - 4, 14), pygame.SRCALPHA)
-        bg.fill((0, 0, 0, 170))
-        surf.blit(bg, (px + 2, py + z - 16))
-        for val, col in items:
-            img = f.render(str(val), True, col)
-            surf.blit(img, (x, py + z - 16))
-            x += (z - 6) // 3
+        f = theme.font(15, True)
+        bg = pygame.Surface((z - 2, 15), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 180))
+        surf.blit(bg, (px + 1, py + z - 16))
+        x = px + 2
+        for kind, val in (("nutrients", n), ("minerals", m), ("energy", e)):
+            theme.resource_icon(surf, kind, (x + 4, py + z - 9), 4)
+            surf.blit(f.render(str(val), True, theme.RESOURCE_COLORS[kind]), (x + 8, py + z - 16))
+            x += (z - 2) // 3
 
     def activate(self, u):
         self.app.select_unit(u)
@@ -334,7 +378,7 @@ class BaseDialog(Dialog):
 
 # ---------------------------------------------------------------------------
 class TechDialog(Dialog):
-    width, height = 900, 640
+    width, height = 960, 680
     title = "Research"
 
     def draw(self, surf, ui):
@@ -342,33 +386,45 @@ class TechDialog(Dialog):
         game = self.game
         p = game.human
         x, y = r.x + 16, r.y + 48
-        known = len(p.techs)
-        total = len(TECHS)
-        theme.text(surf, f"Known technologies: {known}/{total}    Era: {game.era(p.id)}", (x, y), 20, theme.TEXT_DIM)
+        theme.text(surf, f"Known technologies: {len(p.techs)}/{len(TECHS)}    Era: {game.era(p.id)}", (x, y), 20,
+                   theme.TEXT_DIM)
         y += 26
         labs = sum(game.base_report(b)["labs"] for b in game.player_bases(p.id))
         if p.current_tech:
             cost = game.tech_cost(p.id, p.current_tech)
-            theme.text(surf, f"Researching: {TECHS[p.current_tech].name}  ({p.research_progress}/{cost}, {labs} labs/turn)",
-                       (x, y), 20, theme.ACCENT)
+            theme.text(surf, f"Researching: {TECHS[p.current_tech].name}  ({p.research_progress}/{cost}, "
+                             f"{labs} labs per turn)", (x, y), 20, theme.ACCENT)
         else:
-            theme.text(surf, "Choose a technology to research:", (x, y), 20, theme.WARN)
+            theme.text(surf, "Choose what your scientists work on next. Hover for details.", (x, y), 20, theme.WARN)
         y += 30
         opts = sorted(game.available_techs(p.id), key=lambda t: (t.era, t.name))
-        row_h = 62
+        row_h = 92
         visible = max(1, (r.bottom - y - 10) // row_h)
         self.scroll = min(self.scroll, max(0, len(opts) - visible))
         for t in opts[self.scroll:self.scroll + visible]:
+            info = describe.tech_text(t.id)
             rr = pygame.Rect(x, y, r.width - 32, row_h - 6)
             ui.button(surf, rr, "", lambda t=t: self.pick(t.id), selected=p.current_tech == t.id)
             cost = game.tech_cost(p.id, t.id)
             turns = -(-(cost - (p.research_progress if p.current_tech == t.id else 0)) // max(1, labs))
-            theme.text(surf, t.name, (rr.x + 8, rr.y + 5), 22, theme.TEXT, bold=True)
-            theme.text(surf, f"{ERAS[t.era]} / {t.category}   cost {cost} (~{turns} turns)", (rr.right - 8, rr.y + 6), 17,
-                       theme.TEXT_DIM, right=True)
-            un = unlocks(t.id)
-            line = t.description + ("   Unlocks: " + ", ".join(un) if un else "")
-            theme.text_block(surf, line, (rr.x + 8, rr.y + 26, rr.width - 16, 30), 16, theme.TEXT_DIM, 0)
+            theme.text(surf, t.name, (rr.x + 10, rr.y + 6), 23, theme.TEXT, bold=True)
+            theme.text(surf, f"{info['era']} era  |  {t.category}  |  {cost} labs, about {turns} turns",
+                       (rr.right - 10, rr.y + 8), 17, theme.TEXT_DIM, right=True)
+            theme.text(surf, t.description, (rr.x + 10, rr.y + 30), 18, theme.TEXT)
+            ux = rr.x + 10
+            for kind, name in info["unlocks"]:
+                label = f"{kind}: {name}"
+                col = {"Unit": (90, 150, 200), "Facility": (110, 170, 110), "Project": (200, 170, 70),
+                       "Terraform": (170, 130, 90), "Effect": (160, 120, 200)}[kind]
+                wdt = theme.font(15).size(label)[0] + 10
+                if ux + wdt > rr.right - 10:
+                    break
+                pygame.draw.rect(surf, col, (ux, rr.y + 50, wdt, 17), border_radius=3)
+                theme.text(surf, label, (ux + 5, rr.y + 51), 15, (12, 14, 16), bold=True)
+                ux += wdt + 6
+            if info["quote"]:
+                theme.text(surf, f"{info['quote'][0]}  - {info['quote'][1]}", (rr.x + 10, rr.y + 68), 15,
+                           (170, 165, 140))
             y += row_h
         if not opts:
             theme.text(surf, "All technologies are known.", (x, y), 20, theme.GOOD)
@@ -376,6 +432,65 @@ class TechDialog(Dialog):
     def pick(self, tech_id):
         self.game.set_research(self.game.human_id, tech_id)
         self.close()
+
+
+class DiscoveryDialog(Dialog):
+    """Shown when the player discovers a technology or completes a secret project."""
+    width, height = 720, 440
+
+    def __init__(self, app, tech_ids=(), project_ids=()):
+        super().__init__(app)
+        self.items = [("tech", t) for t in tech_ids] + [("project", p) for p in project_ids]
+        self.index = 0
+
+    @property
+    def title(self):
+        kind, _ = self.items[self.index]
+        return "Breakthrough!" if kind == "tech" else "Secret Project Complete!"
+
+    def draw(self, surf, ui):
+        r = self.frame(surf, ui)
+        kind, iid = self.items[self.index]
+        x, y, w = r.x + 24, r.y + 56, r.width - 48
+        if kind == "tech":
+            info = describe.tech_text(iid)
+            theme.text(surf, info["name"], (x, y), 34, theme.GOLD, bold=True)
+            y += 38
+            theme.text(surf, f"{info['era']} era  |  {info['category']}", (x, y), 18, theme.TEXT_DIM)
+            y += 30
+            y = draw_quote(surf, info["quote"], (x + 10, y, w - 20, 60), 20) + 8
+            theme.text(surf, info["description"], (x, y), 20, theme.TEXT)
+            y += 30
+            if info["unlocks"]:
+                theme.text(surf, "Now available:", (x, y), 20, theme.ACCENT, bold=True)
+                y += 24
+                for k, name in info["unlocks"][:6]:
+                    theme.text(surf, f"  {k}: {name}", (x, y), 19, theme.TEXT)
+                    y += 21
+        else:
+            pr = PROJECTS[iid]
+            desc, quote = lore.PROJECTS.get(iid, ("", None))
+            theme.text(surf, pr.name, (x, y), 34, theme.GOLD, bold=True)
+            y += 44
+            y = draw_quote(surf, quote, (x + 10, y, w - 20, 60), 20) + 8
+            y = theme.text_block(surf, desc, (x, y, w, 60), 20, theme.TEXT) + 6
+            theme.text_block(surf, "Effect: " + pr.description, (x, y, w, 60), 20, theme.GOOD)
+        label = "Continue" if self.index < len(self.items) - 1 else "Close"
+        ui.button(surf, (r.right - 160, r.bottom - 52, 140, 36), label, self.next)
+        if self.index < len(self.items) - 1:
+            theme.text(surf, f"{self.index + 1} of {len(self.items)}", (r.x + 24, r.bottom - 44), 18, theme.TEXT_DIM)
+
+    def next(self):
+        if self.index < len(self.items) - 1:
+            self.index += 1
+        else:
+            self.close()
+
+    def on_key(self, event):
+        if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+            self.next()
+            return True
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +654,116 @@ class StatusDialog(Dialog):
 
 
 # ---------------------------------------------------------------------------
-HELP_TEXT = """GOAL: Build a thriving civilization on an alien world. Win by Conquest or by Transcendence (research Transcendence and build the Ascension Engine).
+def _entry(title, kind="", stats="", body="", pros=(), cons=(), here="", quote=None):
+    return {"title": title, "kind": kind, "stats": stats, "body": body, "pros": list(pros), "cons": list(cons),
+            "here": here, "quote": quote}
+
+
+def datalinks_entries():
+    """All encyclopedia entries grouped by category (order matters)."""
+    cats = {}
+    cats["Guide"] = [_entry(t, "Guide", body=b) for t, b in lore.CONCEPTS]
+    cats["Resources"] = [_entry(v["name"], "Resource", body=v["text"], quote=v["quote"]) for v in lore.RESOURCES.values()]
+    terr = [_entry(n, "Terrain", body=d) for n, d in lore.TERRAIN.values()]
+    terr += [_entry(n, "Map feature", body=d) for n, d in lore.SPECIALS.values()]
+    cats["Terrain"] = terr
+    cats["Terraforming"] = []
+    for key, (n, d) in lore.IMPROVEMENTS.items():
+        tf = TERRAFORMS.get(key)
+        stats = f"{tf.turns} turns of Former work   Key: {tf.key.upper()}" if tf else ""
+        if tf and tf.prereq:
+            stats += f"   Requires {TECHS[tf.prereq].name}"
+        cats["Terraforming"].append(_entry(n, "Terrain improvement", stats, d))
+    units = []
+    for u in UNITS.values():
+        info = lore.UNITS.get(u.id, {})
+        req = "Available from the start" if not u.prereq else (
+            "Native life - cannot be built" if u.native else f"Requires {TECHS[u.prereq].name}")
+        units.append(_entry(u.name, f"Unit - {info.get('role', '')}", describe.unit_summary(u) + "\n" + req,
+                            info.get("text", ""), info.get("pros", ()), info.get("cons", ()), quote=info.get("quote")))
+    cats["Units"] = units
+    facs = []
+    for f in FACILITIES.values():
+        desc, advice, quote = lore.FACILITIES.get(f.id, ("", "", None))
+        req = f"Requires {TECHS[f.prereq].name}" if f.prereq else "Available from the start"
+        facs.append(_entry(f.name, "Base facility", f"Cost {f.cost}   Upkeep {f.upkeep}   {req}",
+                           f"{desc} {f.description}", [advice] if advice else [], quote=quote))
+    cats["Facilities"] = facs
+    projs = []
+    for pr in PROJECTS.values():
+        desc, quote = lore.PROJECTS.get(pr.id, ("", None))
+        projs.append(_entry(pr.name, "Secret project", f"Cost {pr.cost}   Requires {TECHS[pr.prereq].name}",
+                            f"{desc}\nEffect: {pr.description}", quote=quote))
+    cats["Secret Projects"] = projs
+    techs = []
+    for t in sorted(TECHS.values(), key=lambda t: (t.era, t.name)):
+        info = describe.tech_text(t.id)
+        pre = ", ".join(info["prereqs"]) or "none"
+        body = t.description + "\nUnlocks: " + (", ".join(f"{k} {n}" for k, n in info["unlocks"]) or "nothing directly")
+        techs.append(_entry(t.name, f"Technology - {info['era']} era, {t.category}", f"Requires: {pre}", body,
+                            quote=info["quote"]))
+    cats["Technologies"] = techs
+    facts = []
+    for f in FACTIONS.values():
+        facts.append(_entry(f.name, f"Faction - led by {f.leader}", f.description, lore.FACTION_LORE.get(f.id, "")))
+    cats["Factions"] = facts
+    return cats
+
+
+class DatalinksDialog(Dialog):
+    width, height = 1080, 700
+    title = "Datalinks - Planetary Encyclopedia"
+
+    def __init__(self, app, category="Guide", entry=None):
+        super().__init__(app)
+        self.cats = datalinks_entries()
+        self.category = category
+        self.entry = 0
+        if entry:
+            for i, e in enumerate(self.cats[category]):
+                if e["title"] == entry:
+                    self.entry = i
+
+    def set_cat(self, c):
+        self.category = c
+        self.entry = 0
+        self.scroll = 0
+
+    def draw(self, surf, ui):
+        r = self.frame(surf, ui)
+        x, y = r.x + 14, r.y + 50
+        for c in self.cats:
+            ui.button(surf, (x, y, 170, 32), c, lambda c=c: self.set_cat(c), selected=c == self.category, size=19)
+            y += 38
+        entries = self.cats[self.category]
+        lx, ly = x + 184, r.y + 50
+        row_h = 28
+        visible = max(1, (r.bottom - ly - 14) // row_h)
+        self.scroll = min(self.scroll, max(0, len(entries) - visible))
+        for i, e in enumerate(entries[self.scroll:self.scroll + visible]):
+            idx = i + self.scroll
+            ui.button(surf, (lx, ly, 240, row_h - 4), e["title"], lambda idx=idx: setattr(self, "entry", idx),
+                      selected=idx == self.entry, size=17)
+            ly += row_h
+        dx = lx + 262
+        e = entries[min(self.entry, len(entries) - 1)]
+        draw_info(surf, (dx, r.y + 56, r.right - dx - 22, r.height - 76), e)
+
+    def on_key(self, event):
+        entries = self.cats[self.category]
+        if event.key in (pygame.K_DOWN, pygame.K_KP2):
+            self.entry = min(len(entries) - 1, self.entry + 1)
+            return True
+        if event.key in (pygame.K_UP, pygame.K_KP8):
+            self.entry = max(0, self.entry - 1)
+            return True
+        return super().on_key(event)
+
+
+# ---------------------------------------------------------------------------
+HELP_TEXT = """NEW TO THE GAME? Open the Datalinks (F6) and read the Guide section. Hover over almost anything - resources, tiles, buttons, citizens - for an explanation.
+
+GOAL: Build a thriving civilization on an alien world. Win by Conquest or by Transcendence (research Transcendence and build the Ascension Engine).
 
 MOUSE: Left-click a unit to select it, left-click your base to open it. Right-click a tile to send the selected unit there. Drag the map to pan, mouse wheel to zoom. Click the minimap to jump.
 
@@ -549,7 +773,7 @@ UNIT ORDERS: B found base (Colony Pod) | H hold/fortify | L sentry | Space skip 
 
 FORMERS: F farm | M mine | S solar collector | R road | N plant forest | X remove fungus | A automate.
 
-SCREENS: F1 help | F2 energy allocation & base list | F3 research | F4 diplomacy | F5 status | Esc menu | Enter end turn. Ctrl+S quicksave, Ctrl+L quickload.
+SCREENS: F1 help | F2 energy allocation & base list | F3 research | F4 diplomacy | F5 status | F6 Datalinks encyclopedia (everything explained) | Esc menu | Enter end turn. Ctrl+S quicksave, Ctrl+L quickload.
 
 TIPS: Bases need defenders - native Xenoworms roam the fungus. Tiles yield Nutrients (growth), Minerals (production) and Energy (credits, psych, labs). Bases larger than 4 produce drones; if drones outnumber the other citizens the base riots. Move energy to Psych or build Recreation Commons to keep order. Early on, no tile can produce more than 2 of any resource - Gene Splicing, Ecological Engineering and Environmental Economics lift those limits."""
 

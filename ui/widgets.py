@@ -57,6 +57,10 @@ class UI:
         self.buttons.append(b)
         return b
 
+    def hotspot(self, rect, tooltip):
+        """An invisible, non-clickable area that shows a tooltip on hover."""
+        self.buttons.append(Button(rect, "", lambda: None, enabled=False, tooltip=tooltip))
+
     def click(self, pos):
         for b in reversed(self.buttons):
             if b.enabled and b.rect.collidepoint(pos):

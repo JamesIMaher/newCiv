@@ -99,3 +99,42 @@ def shade(color, amount):
 
 def mix(a, b, t):
     return tuple(int(a[i] * (1 - t) + b[i] * t) for i in range(3))
+
+
+RESOURCE_COLORS = {"nutrients": NUTRIENT, "minerals": MINERAL, "energy": ENERGY}
+
+
+def resource_icon(surf, kind, center, size=7):
+    """Small pictogram: a leaf for nutrients, a crystal for minerals, a bolt for energy."""
+    cx, cy = center
+    s = size
+    if kind == "nutrients":
+        r = pygame.Rect(cx - s, cy - s // 2 - 1, 2 * s, s + 2)
+        pygame.draw.ellipse(surf, (70, 170, 60), r)
+        pygame.draw.ellipse(surf, (190, 250, 170), r, 1)
+        pygame.draw.line(surf, (30, 90, 30), (cx - s + 2, cy + 1), (cx + s - 2, cy - 1), 1)
+    elif kind == "minerals":
+        pts = [(cx, cy - s), (cx + s * 3 // 4, cy - s // 4), (cx + s // 2, cy + s), (cx - s // 2, cy + s),
+               (cx - s * 3 // 4, cy - s // 4)]
+        pygame.draw.polygon(surf, (130, 140, 190), pts)
+        pygame.draw.polygon(surf, (225, 230, 255), pts, 1)
+    else:
+        pts = [(cx + s // 3, cy - s), (cx - s // 2, cy + 1), (cx, cy + 1), (cx - s // 3, cy + s),
+               (cx + s // 2, cy - 1), (cx, cy - 1)]
+        pygame.draw.polygon(surf, (250, 210, 60), pts)
+        pygame.draw.polygon(surf, (255, 250, 200), pts, 1)
+
+
+def yields(surf, pos, n, m, e, size=18, words=False, gap=10):
+    """Draw 'leaf 2  crystal 1  bolt 0' (optionally with names). Returns list of (kind, rect)."""
+    x, y = pos
+    out = []
+    h = font(size).get_linesize()
+    for kind, val in (("nutrients", n), ("minerals", m), ("energy", e)):
+        icon = max(4, size // 3)
+        resource_icon(surf, kind, (x + icon, y + h // 2 - 1), icon)
+        label = f"{val} {kind.title()}" if words else str(val)
+        r = text(surf, label, (x + icon * 2 + 4, y), size, RESOURCE_COLORS[kind], bold=True)
+        out.append((kind, pygame.Rect(x, y, r.right - x, h)))
+        x = r.right + gap
+    return out

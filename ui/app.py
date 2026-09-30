@@ -11,8 +11,23 @@ from game.entities import MOVE_POINTS
 from game.game import Game, MAP_SIZES
 from game.pathfinding import find_path
 from . import theme
+from game import lore
+from . import describe
 from .dialogs import (BaseDialog, TechDialog, EconomyDialog, DiplomacyDialog, StatusDialog, HelpDialog,
-                      GameMenuDialog, GameOverDialog, LoadDialog)
+                      GameMenuDialog, GameOverDialog, LoadDialog, DatalinksDialog, DiscoveryDialog)
+
+ACTION_TIPS = {
+    "Found Base": "Turn this Colony Pod into a new base on this tile. Bases must be at least 3 tiles apart and "
+                  "outside other factions' territory.",
+    "Automate": "Let the Former choose and build improvements around your bases by itself, every turn.",
+    "Fortify": "Dig in: +25% defense from next turn. The unit stays put until you select it again.",
+    "Sentry": "Stand watch without digging in. The unit won't ask for orders until you select it.",
+    "Explore": "Automatically scout unexplored land and pick up supply pods, every turn.",
+    "Go to": "Pick a destination; the unit travels there over the next turns. Right-clicking a tile does the same.",
+    "Wait": "Skip to the next unit for now and come back to this one later this turn.",
+    "Skip": "This unit does nothing this turn.",
+    "Disband": "Permanently remove this unit. Frees its home base from paying its upkeep.",
+}
 from .renderer import MapView
 from .widgets import UI, Button
 
@@ -293,7 +308,12 @@ class App:
 
     def end_turn(self):
         game = self.game
+        techs_before = set(game.human.techs)
+        projects_before = set(game.projects_built)
         game.end_turn()
+        new_techs = sorted(game.human.techs - techs_before)
+        new_projects = [k for k in game.projects_built if k not in projects_before
+                        and game.project_owner(k) == game.human_id]
         self.waited.clear()
         if game.turn % 10 == 0:
             self.save_game("autosave.sav")
@@ -302,6 +322,8 @@ class App:
         self.select_next()
         if game.human.current_tech is None and game.available_techs(game.human_id) and game.human.alive:
             self.open_dialog(TechDialog(self))
+        if new_techs or new_projects:
+            self.open_dialog(DiscoveryDialog(self, new_techs, new_projects))
         self.show_toast(f"Mission Year {game.year}")
         self._check_game_over()
 
@@ -405,6 +427,7 @@ class App:
             self.end_turn()
             return
         fkeys = {pygame.K_F1: HelpDialog, pygame.K_F2: EconomyDialog, pygame.K_F3: TechDialog,
+                 pygame.K_F6: DatalinksDialog,
                  pygame.K_F4: DiplomacyDialog, pygame.K_F5: StatusDialog}
         if key in fkeys:
             self.open_dialog(fkeys[key](self))
@@ -517,6 +540,20 @@ class App:
         w = surf.get_width()
         pygame.draw.rect(surf, theme.PANEL, (0, 0, w, TOP_H))
         pygame.draw.line(surf, theme.PANEL_BORDER, (0, TOP_H - 1), (w, TOP_H - 1))
+        bx = w - 8
+        for label, cb, tip in reversed((
+                ("Research", lambda: self.open_dialog(TechDialog(self)), "Choose research (F3)"),
+                ("Energy", lambda: self.open_dialog(EconomyDialog(self)), "Energy allocation and base list (F2)"),
+                ("Diplomacy", lambda: self.open_dialog(DiplomacyDialog(self)), "Relations with other factions (F4)"),
+                ("Status", lambda: self.open_dialog(StatusDialog(self)), "Scores and victory conditions (F5)"),
+                ("Datalinks", lambda: self.open_dialog(DatalinksDialog(self)),
+                 "Encyclopedia: every unit, facility, terrain, technology and rule explained (F6)"),
+                ("Help", lambda: self.open_dialog(HelpDialog(self)), "Controls and rules (F1)"),
+                ("Menu", lambda: self.open_dialog(GameMenuDialog(self)), "Save, load, quit (Esc)"))):
+            bw = theme.font(18).size(label)[0] + 18
+            bx -= bw + 4
+            self.ui.button(surf, (bx, 4, bw, TOP_H - 8), label, cb, tooltip=tip, size=18)
+        surf.set_clip((0, 0, bx - 8, TOP_H))  # status text never runs under the buttons
         x = 10
         pygame.draw.rect(surf, p.color, (x, 9, 16, 16))
         x += 24
@@ -529,6 +566,8 @@ class App:
         income = sum(rp["econ"] for rp in reps) - sum(rp["upkeep"] for rp in reps) + sum(
             rp["minerals_net"] for b, rp in zip(bases, reps) if b.production == ("special", "stockpile"))
         r = theme.text(surf, f"Credits {p.credits} ({income:+d})", (x, 10), 20, theme.ENERGY)
+        self.ui.hotspot(r, "Energy credits in reserve, and the change per turn (economy output minus facility "
+                           "upkeep). Spend credits to rush-buy production in a base.")
         x = r.right + 18
         labs = sum(rp["labs"] for rp in reps)
         if p.current_tech:
@@ -538,19 +577,14 @@ class App:
         else:
             rt = "Research: none!"
         r = theme.text(surf, rt, (x, 10), 20, (130, 190, 250))
+        self.ui.hotspot(r, f"Current research: progress / cost, and turns left at {labs} labs per turn. "
+                           "Click Research (F3) to change it.")
         x = r.right + 18
-        theme.text(surf, f"E{p.alloc[0] * 10}/P{p.alloc[1] * 10}/L{p.alloc[2] * 10}", (x, 10), 18, theme.TEXT_DIM)
-        bx = w - 8
-        for label, cb, tip in reversed((
-                ("Research", lambda: self.open_dialog(TechDialog(self)), "Choose research (F3)"),
-                ("Energy", lambda: self.open_dialog(EconomyDialog(self)), "Energy allocation and base list (F2)"),
-                ("Diplomacy", lambda: self.open_dialog(DiplomacyDialog(self)), "Relations with other factions (F4)"),
-                ("Status", lambda: self.open_dialog(StatusDialog(self)), "Scores and victory conditions (F5)"),
-                ("Help", lambda: self.open_dialog(HelpDialog(self)), "Controls and rules (F1)"),
-                ("Menu", lambda: self.open_dialog(GameMenuDialog(self)), "Save, load, quit (Esc)"))):
-            bw = theme.font(18).size(label)[0] + 18
-            bx -= bw + 4
-            self.ui.button(surf, (bx, 4, bw, TOP_H - 8), label, cb, tooltip=tip, size=18)
+        r = theme.text(surf, f"Econ {p.alloc[0] * 10}%  Psych {p.alloc[1] * 10}%  Labs {p.alloc[2] * 10}%", (x, 10),
+                       18, theme.TEXT_DIM)
+        self.ui.hotspot(r, "How your energy is split: Economy (credits), Psych (keeps citizens happy) and Labs "
+                           "(research). Change it on the Energy screen (F2).")
+        surf.set_clip(None)
 
     def draw_log(self, surf):
         game = self.game
@@ -607,9 +641,16 @@ class App:
     def _unit_panel(self, surf, u, x, y):
         game = self.game
         owner = game.players[u.owner]
-        theme.text(surf, u.name, (x, y), 22, owner.color, bold=True)
+        r = theme.text(surf, u.name, (x, y), 22, owner.color, bold=True)
+        role = lore.UNITS.get(u.type_id, {}).get("role", "")
+        theme.text(surf, role, (r.right + 8, y + 3), 17, theme.TEXT_DIM)
+        self.ui.hotspot(r, describe.unit_tooltip(u.type))
         y += 22
-        theme.text(surf, f"{u.morale_name}   A{u.type.attack} D{u.type.defense} M{u.type.moves}", (x, y), 18, theme.TEXT)
+        r = theme.text(surf, f"{u.morale_name}   Attack {u.type.attack}  Defense {u.type.defense}", (x, y), 18,
+                       theme.TEXT)
+        self.ui.hotspot(r, f"Morale: {u.morale_name} (each level adds 12.5% strength; win fights to gain more). "
+                           f"Attack is used when this unit strikes, Defense when it is attacked. Fights with native "
+                           f"life use psi strength instead (see Datalinks).")
         y += 20
         theme.bar(surf, (x, y + 3, 120, 9), u.hp / 10, (80, 220, 80))
         mv = u.moves_left / MOVE_POINTS
@@ -642,7 +683,14 @@ class App:
         bw = (SIDE_W - 30) // 2
         for i, (label, cb, en) in enumerate(acts):
             bx = x - 2 + (i % 2) * (bw + 6)
-            self.ui.button(surf, (bx, y, bw, 24), label, cb, enabled=en, size=17)
+            name = label.split(" [")[0]
+            tip = ACTION_TIPS.get(name)
+            if tip is None:
+                imp = next((v for k, v in lore.IMPROVEMENTS.items() if v[0] == name), None)
+                tip = imp[1] if imp else None
+            if name == "Found Base" and not en:
+                tip = game.can_found_base(u)[1] + " " + ACTION_TIPS["Found Base"]
+            self.ui.button(surf, (bx, y, bw, 24), label, cb, enabled=en, size=17, tooltip=tip)
             if i % 2 == 1:
                 y += 28
         if len(acts) % 2 == 1:
@@ -653,47 +701,56 @@ class App:
         game = self.game
         hid = game.human_id
         tx, ty = tile
+        w = SIDE_W - 24
         pygame.draw.line(surf, theme.PANEL_BORDER, (x - 4, y), (x + SIDE_W - 20, y))
         y += 6
         if not game.is_explored(hid, tx, ty):
             theme.text(surf, "Unexplored", (x, y), 19, theme.TEXT_DIM)
+            theme.text_block(surf, "Send a unit to see what's here. Scouts can explore automatically (E).",
+                             (x, y + 22, w, 60), 16, theme.TEXT_DIM)
             return
         t = game.world.tiles[tx][ty]
         theme.text(surf, t.terrain_name(), (x, y), 19, theme.TEXT, bold=True)
         y += 20
-        elev = f"{t.elevation}m"
+        theme.text(surf, f"Elevation {t.elevation}m", (x, y), 16, theme.TEXT_DIM)
+        y += 18
         n, m, e = game.tile_yield(t, hid, (tx, ty) in game.base_pos)
-        theme.text(surf, f"({tx},{ty})  {elev}", (x, y), 17, theme.TEXT_DIM)
-        r = theme.text(surf, f"N{n}", (x + 130, y), 18, theme.NUTRIENT, bold=True)
-        r = theme.text(surf, f"M{m}", (r.right + 8, y), 18, theme.MINERAL, bold=True)
-        theme.text(surf, f"E{e}", (r.right + 8, y), 18, theme.ENERGY, bold=True)
-        y += 20
-        extras = sorted(i for i in t.improvements)
+        for kind, rr in theme.yields(surf, (x, y), n, m, e, size=18, words=True, gap=8):
+            self.ui.hotspot(rr, lore.RESOURCES[kind]["name"] + ": " + lore.RESOURCES[kind]["short"])
+        y += 22
+        imps = describe.improvement_names(t)
         if t.special:
-            extras.append(f"{t.special} bonus")
+            imps.append(lore.SPECIALS[t.special][0])
         if t.supply_pod:
-            extras.append("supply pod")
-        if extras:
-            theme.text(surf, ", ".join(extras), (x, y), 17, theme.TEXT_DIM)
+            imps.append("Supply Pod")
+        if imps:
+            theme.text(surf, "Here: " + ", ".join(imps), (x, y), 16, theme.GOLD)
             y += 18
         if t.owner is not None:
-            theme.text(surf, f"Territory: {game.players[t.owner].name}", (x, y), 17, game.players[t.owner].color)
+            theme.text(surf, f"Territory of the {game.players[t.owner].name}", (x, y), 16, game.players[t.owner].color)
             y += 18
         b = game.base_at(tx, ty)
         if b:
             theme.text(surf, f"Base: {b.name} (size {b.pop})", (x, y), 18, game.players[b.owner].color, bold=True)
             y += 20
         if game.is_visible(hid, tx, ty):
-            for u in game.units_at(tx, ty)[:5]:
+            for u in game.units_at(tx, ty)[:4]:
                 if y > end_y - 18:
                     break
                 o = game.players[u.owner]
-                txt = f"{u.name} ({o.name if not o.is_native else 'native'})"
+                txt = f"{u.name} ({o.name if not o.is_native else 'native life'})"
                 if self.selected and u.owner != hid and self.selected.owner == hid and game.can_attack(self.selected) \
                         and game.world.distance(u.x, u.y, self.selected.x, self.selected.y) == 1:
                     txt += f"  win {int(game.combat_odds(self.selected, tx, ty) * 100)}%"
-                theme.text(surf, txt, (x, y), 17, o.color)
+                rr = theme.text(surf, txt, (x, y), 16, o.color)
+                self.ui.hotspot(rr, describe.unit_tooltip(u.type))
                 y += 18
+        # Description of the land itself
+        y += 4
+        for para in describe.tile_description(t)[:2] + [describe.best_use_hint(t)]:
+            if y > end_y - 36:
+                break
+            y = theme.text_block(surf, para, (x, y, w, end_y - y), 15, theme.TEXT_DIM, 0) + 4
 
     # ------------------------------------------------------------------
     # Menus
@@ -770,8 +827,9 @@ class App:
         dx = r.x + 380
         theme.text(surf, f.name, (dx, r.y + 62), 30, f.color, bold=True)
         theme.text(surf, f.leader, (dx, r.y + 94), 22, theme.TEXT_DIM)
-        theme.text_block(surf, f.description, (dx, r.y + 126, r.right - dx - 20, 80), 21, theme.TEXT)
-        y = r.y + 230
+        yb = theme.text_block(surf, f.description, (dx, r.y + 124, r.right - dx - 20, 50), 20, theme.GOLD)
+        theme.text_block(surf, lore.FACTION_LORE.get(f.id, ""), (dx, yb + 6, r.right - dx - 20, 110), 18, theme.TEXT)
+        y = r.y + 300
         theme.text(surf, "Planet size", (dx, y), 22, theme.ACCENT, bold=True)
         y += 28
         for i, size in enumerate(MAP_SIZES):
