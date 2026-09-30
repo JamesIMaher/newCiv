@@ -1,21 +1,26 @@
+import os
+
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")  # keep the console quiet
+
 import pygame
-import sys
-import grid 
 from Screen.screen import Screen
 
 pygame.init()
 
-SCREEN_WIDTH = pygame.display.Info().current_w / 2
-SCREEN_HEIGHT = pygame.display.Info().current_h - 80
-GAME_TITLE = "New Civilization"
-GRID_SIZE = (70, 50)
-FPS = 60
+info = pygame.display.Info()
+SCREEN_WIDTH = max(1100, min(1600, info.current_w - 80))
+SCREEN_HEIGHT = max(700, min(1000, info.current_h - 100))
+
 
 def main():
-    #Initialize the pygame display
+    # Imported after pygame.init() so fonts are available.
+    from ui.app import App, GAME_TITLE
+    from ui.globe import make_icon
+    pygame.display.set_icon(make_icon())
     game_screen = Screen(SCREEN_WIDTH, SCREEN_HEIGHT, GAME_TITLE)
-    game_grid = grid.Grid(SCREEN_WIDTH, SCREEN_HEIGHT, GRID_SIZE)
-    game_grid.draw_grid_terrain(game_screen)
+    App(game_screen).run()
+    pygame.quit()
+
 
 if __name__ == "__main__":
     main()
