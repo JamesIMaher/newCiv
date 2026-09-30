@@ -72,8 +72,10 @@ tools/simulate.py  headless all-AI games for balancing
 
 ## Roadmap: where we go next
 
-The base game is intentionally close to the classics. The planned divergences:
+See [docs/DESIGN.md](docs/DESIGN.md) for the design direction:
 
-1. **Viable cultural and economic victories.** Right now only Conquest and Transcendence exist.
-2. **A game that doesn't end at the "space" moment.** The tech tree, projects and victories should continue past
-   Transcendence-era technology into later eras.
+- **Economic Hegemony** victory: market share, a planetary currency bloc, and corporate buyouts.
+- **Ideological Ascendancy** victory: influence pressure, ideology adoption, and legacy works.
+- **Game phases past the stars:** the planet awakens as an actor, then orbital/star-system map layers, then deeper
+  eras and a multi-milestone Transcendence.
+- **Smarter AI** (next): naval invasions, coordinated task forces, trades/pacts/grudges, and victory awareness.
