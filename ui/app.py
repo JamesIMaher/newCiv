@@ -1,0 +1,792 @@
+"""Top-level application: main menu, new-game setup, and the in-game screen."""
+import math
+import os
+import pickle
+import random
+
+import pygame
+
+from game.data import FACTION_LIST, FACTIONS, TECHS, TERRAFORMS
+from game.entities import MOVE_POINTS
+from game.game import Game, MAP_SIZES
+from game.pathfinding import find_path
+from . import theme
+from .dialogs import (BaseDialog, TechDialog, EconomyDialog, DiplomacyDialog, StatusDialog, HelpDialog,
+                      GameMenuDialog, GameOverDialog, LoadDialog)
+from .renderer import MapView
+from .widgets import UI, Button
+
+TOP_H = 34
+SIDE_W = 290
+SAVE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "saves")
+
+MOVE_KEYS = {
+    pygame.K_UP: (0, -1), pygame.K_DOWN: (0, 1), pygame.K_LEFT: (-1, 0), pygame.K_RIGHT: (1, 0),
+    pygame.K_KP8: (0, -1), pygame.K_KP2: (0, 1), pygame.K_KP4: (-1, 0), pygame.K_KP6: (1, 0),
+    pygame.K_KP7: (-1, -1), pygame.K_KP9: (1, -1), pygame.K_KP1: (-1, 1), pygame.K_KP3: (1, 1),
+    pygame.K_HOME: (-1, -1), pygame.K_PAGEUP: (1, -1), pygame.K_END: (-1, 1), pygame.K_PAGEDOWN: (1, 1),
+}
+
+
+class App:
+    def __init__(self, screen):
+        self.screen = screen
+        self.surf = screen.screen
+        self.clock = screen.clock
+        self.ui = UI()
+        self.state = "menu"
+        self.game = None
+        self.view = None
+        self.dialogs = []
+        self.selected = None
+        self.hover_tile = None
+        self.goto_mode = False
+        self.path_cache = (None, None, None)
+        self.waited = set()
+        self.running = True
+        self.toast = None
+        self.drag = None
+        self.minimap_geom = None
+        self.setup = {"faction": "concord", "map": "standard", "ai": 3}
+        self.stars = [(random.random(), random.random(), random.random()) for _ in range(180)]
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+    def run(self):
+        while self.running:
+            for event in pygame.event.get():
+                self.handle_event(event)
+            self.surf = pygame.display.get_surface()
+            self.draw()
+            pygame.display.flip()
+            self.clock.tick(60)
+
+    def quit(self):
+        self.running = False
+
+    def show_toast(self, msg, color=theme.TEXT):
+        self.toast = (msg, pygame.time.get_ticks() + 2800, color)
+
+    # ------------------------------------------------------------------
+    # Dialogs
+    # ------------------------------------------------------------------
+    def open_dialog(self, d):
+        self.dialogs.append(d)
+
+    def close_dialog(self, d):
+        if d in self.dialogs:
+            self.dialogs.remove(d)
+
+    def open_base(self, base):
+        self.dialogs = [d for d in self.dialogs if not isinstance(d, BaseDialog)]
+        self.open_dialog(BaseDialog(self, base))
+
+    # ------------------------------------------------------------------
+    # Game lifecycle
+    # ------------------------------------------------------------------
+    def start_game(self):
+        cfg = self.setup
+        self.game = Game(cfg["faction"], cfg["ai"], cfg["map"])
+        self._enter_game()
+        self.open_dialog(TechDialog(self))
+        self.show_toast("Planetfall! Found your first base with a Colony Pod (B). Press F1 for help.")
+
+    def _enter_game(self):
+        self.view = MapView(self.game)
+        self.dialogs = []
+        self.selected = None
+        self.waited = set()
+        self.state = "game"
+        self._layout()
+        units = self.game.player_units(self.game.human_id)
+        bases = self.game.player_bases(self.game.human_id)
+        if units:
+            self.view.center_on(units[0].x, units[0].y)
+        elif bases:
+            self.view.center_on(bases[0].x, bases[0].y)
+        self.select_next()
+
+    def to_main_menu(self):
+        self.state = "menu"
+        self.dialogs = []
+        self.game = None
+
+    def list_saves(self):
+        if not os.path.isdir(SAVE_DIR):
+            return []
+        files = [f for f in os.listdir(SAVE_DIR) if f.endswith(".sav")]
+        files.sort(key=lambda f: -os.path.getmtime(os.path.join(SAVE_DIR, f)))
+        return files
+
+    def save_game(self, name):
+        if not self.game:
+            return
+        os.makedirs(SAVE_DIR, exist_ok=True)
+        with open(os.path.join(SAVE_DIR, name), "wb") as fh:
+            pickle.dump(self.game, fh)
+
+    def quick_save(self):
+        self.save_game("quicksave.sav")
+        self.dialogs = [d for d in self.dialogs if not isinstance(d, GameMenuDialog)]
+        self.show_toast("Game saved.")
+
+    def quick_load(self):
+        if "quicksave.sav" in self.list_saves():
+            self.load_game("quicksave.sav")
+        else:
+            self.show_toast("No quicksave found.", theme.WARN)
+
+    def load_game(self, name):
+        try:
+            with open(os.path.join(SAVE_DIR, name), "rb") as fh:
+                self.game = pickle.load(fh)
+        except Exception as exc:  # corrupt or incompatible save
+            self.show_toast(f"Could not load {name}: {exc}", theme.WARN)
+            return
+        self._enter_game()
+        self.show_toast(f"Loaded {name}.")
+
+    def _layout(self):
+        w, h = self.surf.get_size()
+        if self.view:
+            self.view.rect = pygame.Rect(0, TOP_H, w - SIDE_W, h - TOP_H)
+            self.view.clamp()
+
+    # ------------------------------------------------------------------
+    # Unit selection & orders
+    # ------------------------------------------------------------------
+    def select_unit(self, u):
+        self.selected = u
+        self.goto_mode = False
+        if u and self.view and not self.view.is_on_screen(u.x, u.y):
+            self.view.center_on(u.x, u.y)
+
+    def select_next(self):
+        game = self.game
+        units = game.units_needing_orders(game.human_id)
+        pending = [u for u in units if u.id not in self.waited]
+        if not pending and units:
+            self.waited.clear()
+            pending = units
+        if not pending:
+            self.selected = None if not self.selected or self.selected.id not in game.units else self.selected
+            if self.selected and self.selected.moves_left <= 0:
+                self.selected = None
+            return
+        if self.selected and self.selected.id in game.units:
+            s = self.selected
+            pending.sort(key=lambda u: game.world.distance(u.x, u.y, s.x, s.y))
+        self.select_unit(pending[0])
+
+    def _after_action(self):
+        u = self.selected
+        if u is None or u.id not in self.game.units or u.moves_left <= 0 or u.orders:
+            self.select_next()
+        self._check_game_over()
+
+    def _check_game_over(self):
+        if self.game.winner and not any(isinstance(d, GameOverDialog) for d in self.dialogs) \
+                and not getattr(self.game, "_winner_shown", False):
+            self.game._winner_shown = True
+            self.open_dialog(GameOverDialog(self))
+
+    def move_selected(self, dx, dy):
+        u = self.selected
+        if not u or u.id not in self.game.units:
+            return
+        u.orders = None if u.orders in ("goto", "explore", "auto", "fortify", "sentry") else u.orders
+        res = self.game.move_unit(u, u.x + dx, u.y + dy)
+        if res.startswith("blocked"):
+            self.show_toast(res.split(":", 1)[1].capitalize(), theme.WARN)
+            if u.moves_left <= 0:
+                self._after_action()
+            return
+        if u.id in self.game.units and not self.view.is_on_screen(u.x, u.y, 3):
+            self.view.center_on(u.x, u.y)
+        self._after_action()
+
+    def act_found(self):
+        u = self.selected
+        if not u:
+            return
+        ok, why = self.game.can_found_base(u)
+        if not ok:
+            self.show_toast(why, theme.WARN)
+            return
+        b = self.game.found_base(u)
+        self.selected = None
+        self.open_base(b)
+        self._after_action()
+
+    def act_fortify(self):
+        if self.selected:
+            self.game.fortify(self.selected)
+            self._after_action()
+
+    def act_sentry(self):
+        if self.selected:
+            self.game.sentry(self.selected)
+            self._after_action()
+
+    def act_skip(self):
+        if self.selected:
+            self.selected.moves_left = 0
+            self._after_action()
+
+    def act_wait(self):
+        if self.selected:
+            self.waited.add(self.selected.id)
+            self.select_next()
+
+    def act_explore(self):
+        from game import ai
+        u = self.selected
+        if u:
+            u.orders = "explore"
+            if not ai.act_explore(self.game, u):
+                u.orders = None
+                self.show_toast("Nothing left to explore.", theme.WARN)
+            self._after_action()
+
+    def act_automate(self):
+        from game import ai
+        u = self.selected
+        if u and u.type.former:
+            u.orders = "auto"
+            ai.act_former(self.game, u)
+            self._after_action()
+
+    def act_terraform(self, kind):
+        u = self.selected
+        if not u or not u.type.former:
+            return
+        if self.game.start_terraform(u, kind):
+            self._after_action()
+        else:
+            self.show_toast(f"Cannot {TERRAFORMS[kind].name.lower()} here.", theme.WARN)
+
+    def act_disband(self):
+        u = self.selected
+        if u:
+            self.game.kill_unit(u)
+            self.selected = None
+            self.select_next()
+
+    def act_goto_mode(self):
+        if self.selected:
+            self.goto_mode = True
+            self.show_toast("Click a destination (right-click also works).")
+
+    def goto(self, tile):
+        u = self.selected
+        if not u:
+            return
+        if self.game.set_goto(u, *tile):
+            self.game.follow_path(u)
+            if u.id in self.game.units and not u.path and u.orders == "goto":
+                u.orders = None
+            self._after_action()
+        else:
+            self.show_toast("No route to that destination.", theme.WARN)
+        self.goto_mode = False
+
+    def end_turn(self):
+        game = self.game
+        game.end_turn()
+        self.waited.clear()
+        if game.turn % 10 == 0:
+            self.save_game("autosave.sav")
+        self.view.minimap_dirty = True
+        self.selected = None
+        self.select_next()
+        if game.human.current_tech is None and game.available_techs(game.human_id) and game.human.alive:
+            self.open_dialog(TechDialog(self))
+        self.show_toast(f"Mission Year {game.year}")
+        self._check_game_over()
+
+    # ------------------------------------------------------------------
+    # Events
+    # ------------------------------------------------------------------
+    def handle_event(self, event):
+        if event.type == pygame.QUIT:
+            self.running = False
+            return
+        if event.type == pygame.VIDEORESIZE:
+            self.surf = pygame.display.get_surface()
+            self._layout()
+            return
+        if self.state != "game":
+            self.handle_menu_event(event)
+            return
+        if event.type == pygame.KEYDOWN:
+            self.handle_key(event)
+        elif event.type == pygame.MOUSEWHEEL:
+            if self.dialogs:
+                self.dialogs[-1].on_wheel(event.y)
+            elif self.view.rect.collidepoint(pygame.mouse.get_pos()):
+                self.view.zoom(1 if event.y > 0 else -1, pygame.mouse.get_pos())
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button in (4, 5):
+                return
+            if event.button == 1:
+                if self.ui.click(event.pos):
+                    return
+                if self.dialogs:
+                    return
+                if self.minimap_geom and self.view.minimap_click(event.pos, *self.minimap_geom):
+                    return
+                if self.view.rect.collidepoint(event.pos):
+                    self.drag = [event.pos, event.pos, False]
+            elif event.button == 3 and not self.dialogs:
+                tile = self.view.screen_to_tile(event.pos)
+                if tile and self.selected:
+                    self.goto(tile)
+            elif event.button == 2 and not self.dialogs:
+                self.drag = [event.pos, event.pos, True]
+        elif event.type == pygame.MOUSEMOTION:
+            if self.drag:
+                start, last, moved = self.drag
+                if moved or abs(event.pos[0] - start[0]) + abs(event.pos[1] - start[1]) > 6:
+                    self.view.pan(event.pos[0] - last[0], event.pos[1] - last[1])
+                    self.drag = [start, event.pos, True]
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button in (1, 2) and self.drag:
+                start, _, moved = self.drag
+                self.drag = None
+                if not moved and event.button == 1:
+                    tile = self.view.screen_to_tile(event.pos)
+                    if tile:
+                        self.map_click(tile)
+
+    def map_click(self, tile):
+        game = self.game
+        if self.goto_mode and self.selected:
+            self.goto(tile)
+            return
+        base = game.base_at(*tile)
+        if base and base.owner == game.human_id:
+            self.open_base(base)
+            return
+        mine = [u for u in game.units_at(*tile) if u.owner == game.human_id]
+        if mine:
+            if self.selected in mine and len(mine) > 1:
+                i = mine.index(self.selected)
+                u = mine[(i + 1) % len(mine)]
+            else:
+                u = next((m for m in mine if not m.carried_by), mine[0])
+            if u.orders in ("fortify", "sentry"):
+                u.orders = None
+                u.fortified = False
+            self.select_unit(u)
+
+    def handle_key(self, event):
+        key = event.key
+        mods = event.mod
+        if self.dialogs:
+            d = self.dialogs[-1]
+            if not d.on_key(event) and key == pygame.K_ESCAPE:
+                d.close()
+            return
+        ctrl = mods & pygame.KMOD_CTRL
+        if ctrl and key == pygame.K_s:
+            self.quick_save()
+            return
+        if ctrl and key == pygame.K_l:
+            self.quick_load()
+            return
+        if key == pygame.K_ESCAPE:
+            if self.goto_mode:
+                self.goto_mode = False
+            else:
+                self.open_dialog(GameMenuDialog(self))
+            return
+        if key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self.end_turn()
+            return
+        fkeys = {pygame.K_F1: HelpDialog, pygame.K_F2: EconomyDialog, pygame.K_F3: TechDialog,
+                 pygame.K_F4: DiplomacyDialog, pygame.K_F5: StatusDialog}
+        if key in fkeys:
+            self.open_dialog(fkeys[key](self))
+            return
+        if key == pygame.K_TAB or key == pygame.K_PERIOD:
+            self.select_next()
+            return
+        if key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+            self.view.zoom(1)
+            return
+        if key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+            self.view.zoom(-1)
+            return
+        u = self.selected
+        if key in MOVE_KEYS:
+            dx, dy = MOVE_KEYS[key]
+            if u and u.id in self.game.units:
+                self.move_selected(dx, dy)
+            else:
+                z = self.view.z
+                self.view.pan(-dx * z * 3, -dy * z * 3)
+            return
+        if not u or u.id not in self.game.units:
+            return
+        if key == pygame.K_c:
+            self.view.center_on(u.x, u.y)
+        elif key == pygame.K_b:
+            self.act_found()
+        elif key == pygame.K_h:
+            self.act_fortify()
+        elif key == pygame.K_l:
+            self.act_sentry()
+        elif key == pygame.K_SPACE:
+            self.act_skip()
+        elif key == pygame.K_w:
+            self.act_wait()
+        elif key == pygame.K_e:
+            self.act_explore()
+        elif key == pygame.K_g:
+            self.act_goto_mode()
+        elif key == pygame.K_a:
+            self.act_automate()
+        elif key == pygame.K_DELETE:
+            self.act_disband()
+        elif u.type.former:
+            for tf in TERRAFORMS.values():
+                if key == pygame.key.key_code(tf.key):
+                    self.act_terraform(tf.id)
+                    return
+
+    # ------------------------------------------------------------------
+    # Drawing
+    # ------------------------------------------------------------------
+    def draw(self):
+        mouse = pygame.mouse.get_pos()
+        self.ui.begin(mouse)
+        if self.state == "game":
+            self.draw_game(mouse)
+        elif self.state == "setup":
+            self.draw_setup(mouse)
+        else:
+            self.draw_menu(mouse)
+        tip = self.ui.hovered_tooltip()
+        if tip:
+            lines = theme.wrap(tip, 17, 320)
+            w = max(theme.font(17).size(l)[0] for l in lines) + 12
+            h = len(lines) * 18 + 8
+            x = min(mouse[0] + 14, self.surf.get_width() - w - 4)
+            y = min(mouse[1] + 18, self.surf.get_height() - h - 4)
+            theme.panel(self.surf, (x, y, w, h), (10, 14, 18), theme.PANEL_BORDER, radius=3)
+            for i, l in enumerate(lines):
+                theme.text(self.surf, l, (x + 6, y + 4 + i * 18), 17)
+
+    def draw_game(self, mouse):
+        surf = self.surf
+        game = self.game
+        self._layout()
+        surf.fill(theme.BG)
+        ticks = pygame.time.get_ticks()
+        self.hover_tile = self.view.screen_to_tile(mouse) if not self.dialogs else None
+        if self.selected and self.selected.id not in game.units:
+            self.selected = None
+        path = None
+        if self.selected and self.hover_tile and (self.goto_mode or pygame.mouse.get_pressed()[2] or
+                                                  pygame.key.get_mods() & pygame.KMOD_SHIFT):
+            key = (self.selected.id, self.selected.x, self.selected.y, self.hover_tile)
+            if self.path_cache[0] != key:
+                self.path_cache = (key, find_path(game, self.selected, *self.hover_tile), None)
+            path = self.path_cache[1]
+        elif self.selected and self.selected.orders == "goto" and self.selected.path:
+            path = self.selected.path
+        self.view.draw(surf, game.human_id, self.selected, self.hover_tile, path, ticks)
+        self.draw_log(surf)
+        self.draw_topbar(surf)
+        self.draw_sidebar(surf, ticks)
+        if self.toast and ticks < self.toast[1]:
+            msg, _, col = self.toast
+            img = theme.font(24, True).render(msg, True, col)
+            r = img.get_rect(midtop=(self.view.rect.centerx, self.view.rect.y + 12))
+            theme.panel(surf, r.inflate(24, 12), (10, 14, 18), theme.PANEL_BORDER, alpha=220)
+            surf.blit(img, r)
+        for d in list(self.dialogs):
+            if d is self.dialogs[-1]:
+                self.ui.buttons = []  # modal: only the top dialog is clickable
+            d.draw(surf, self.ui)
+
+    def draw_topbar(self, surf):
+        game = self.game
+        p = game.human
+        w = surf.get_width()
+        pygame.draw.rect(surf, theme.PANEL, (0, 0, w, TOP_H))
+        pygame.draw.line(surf, theme.PANEL_BORDER, (0, TOP_H - 1), (w, TOP_H - 1))
+        x = 10
+        pygame.draw.rect(surf, p.color, (x, 9, 16, 16))
+        x += 24
+        r = theme.text(surf, p.name, (x, 9), 22, p.color, bold=True)
+        x = r.right + 18
+        r = theme.text(surf, f"M.Y. {game.year}  (turn {game.turn})", (x, 10), 20)
+        x = r.right + 18
+        bases = game.player_bases(p.id)
+        reps = [b.last_report or game.base_report(b) for b in bases]
+        income = sum(rp["econ"] for rp in reps) - sum(rp["upkeep"] for rp in reps) + sum(
+            rp["minerals_net"] for b, rp in zip(bases, reps) if b.production == ("special", "stockpile"))
+        r = theme.text(surf, f"Credits {p.credits} ({income:+d})", (x, 10), 20, theme.ENERGY)
+        x = r.right + 18
+        labs = sum(rp["labs"] for rp in reps)
+        if p.current_tech:
+            cost = game.tech_cost(p.id, p.current_tech)
+            turns = -(-(cost - p.research_progress) // labs) if labs > 0 else "--"
+            rt = f"{TECHS[p.current_tech].name} {p.research_progress}/{cost} ({turns}t)"
+        else:
+            rt = "Research: none!"
+        r = theme.text(surf, rt, (x, 10), 20, (130, 190, 250))
+        x = r.right + 18
+        theme.text(surf, f"E{p.alloc[0] * 10}/P{p.alloc[1] * 10}/L{p.alloc[2] * 10}", (x, 10), 18, theme.TEXT_DIM)
+        bx = w - 8
+        for label, cb, tip in reversed((
+                ("Research", lambda: self.open_dialog(TechDialog(self)), "Choose research (F3)"),
+                ("Energy", lambda: self.open_dialog(EconomyDialog(self)), "Energy allocation and base list (F2)"),
+                ("Diplomacy", lambda: self.open_dialog(DiplomacyDialog(self)), "Relations with other factions (F4)"),
+                ("Status", lambda: self.open_dialog(StatusDialog(self)), "Scores and victory conditions (F5)"),
+                ("Help", lambda: self.open_dialog(HelpDialog(self)), "Controls and rules (F1)"),
+                ("Menu", lambda: self.open_dialog(GameMenuDialog(self)), "Save, load, quit (Esc)"))):
+            bw = theme.font(18).size(label)[0] + 18
+            bx -= bw + 4
+            self.ui.button(surf, (bx, 4, bw, TOP_H - 8), label, cb, tooltip=tip, size=18)
+
+    def draw_log(self, surf):
+        game = self.game
+        hid = game.human_id
+        msgs = [m for m in game.log if (m[1] is None or m[1] == hid) and m[0] >= game.turn - 1][-7:]
+        if not msgs:
+            return
+        x = self.view.rect.x + 8
+        lh = 19
+        y = self.view.rect.bottom - 8 - lh * len(msgs)
+        w = min(620, self.view.rect.width - 16)
+        theme.panel(surf, (x - 4, y - 4, w, lh * len(msgs) + 8), (0, 0, 0), None, alpha=140)
+        for turn, _pid, txt, pos in msgs:
+            col = theme.TEXT if turn >= game.turn - 1 else theme.TEXT_DIM
+            if turn < game.turn:
+                col = theme.TEXT_DIM
+            r = theme.text(surf, txt[:95], (x, y), 18, col)
+            if pos:
+                self.ui.buttons.append(Button(r, "", lambda p=pos: self.view.center_on(*p), tooltip="Click to show on map"))
+            y += lh
+
+    def draw_sidebar(self, surf, ticks):
+        game = self.game
+        w, h = surf.get_size()
+        x0 = w - SIDE_W
+        pygame.draw.rect(surf, theme.PANEL, (x0, TOP_H, SIDE_W, h - TOP_H))
+        pygame.draw.line(surf, theme.PANEL_BORDER, (x0, TOP_H), (x0, h))
+        mm_rect = pygame.Rect(x0 + 8, TOP_H + 8, SIDE_W - 16, 150)
+        pygame.draw.rect(surf, (0, 0, 0), mm_rect)
+        self.minimap_geom = self.view.draw_minimap(surf, mm_rect, game.human_id)
+        x = x0 + 12
+        y = mm_rect.bottom + 10
+        u = self.selected
+        if u and u.id in game.units:
+            y = self._unit_panel(surf, u, x, y)
+        else:
+            pending = len(game.units_needing_orders(game.human_id))
+            theme.text(surf, "No unit selected", (x, y), 20, theme.TEXT_DIM)
+            y += 22
+            theme.text(surf, f"{pending} unit(s) awaiting orders", (x, y), 18, theme.TEXT_DIM)
+            y += 26
+        # Tile info
+        tile = self.hover_tile or ((u.x, u.y) if u else None)
+        end_y = h - 60
+        if tile and y < end_y - 80:
+            self._tile_panel(surf, tile, x, y, end_y)
+        # End turn
+        pending = game.units_needing_orders(game.human_id)
+        ready = not pending
+        pulse = ready and (ticks // 500) % 2 == 0
+        label = "End Turn  [Enter]" if ready else f"End Turn ({len(pending)} waiting)"
+        self.ui.button(surf, (x0 + 10, h - 50, SIDE_W - 20, 40), label, self.end_turn, selected=pulse, size=22)
+
+    def _unit_panel(self, surf, u, x, y):
+        game = self.game
+        owner = game.players[u.owner]
+        theme.text(surf, u.name, (x, y), 22, owner.color, bold=True)
+        y += 22
+        theme.text(surf, f"{u.morale_name}   A{u.type.attack} D{u.type.defense} M{u.type.moves}", (x, y), 18, theme.TEXT)
+        y += 20
+        theme.bar(surf, (x, y + 3, 120, 9), u.hp / 10, (80, 220, 80))
+        mv = u.moves_left / MOVE_POINTS
+        mvs = f"{mv:.0f}" if u.moves_left % MOVE_POINTS == 0 else f"{mv:.1f}"
+        theme.text(surf, f"Moves {mvs}/{game.full_moves(u) // MOVE_POINTS}", (x + 130, y), 18, theme.TEXT_DIM)
+        y += 18
+        status = u.orders or "ready"
+        if u.terraform:
+            status = f"{TERRAFORMS[u.terraform[0]].name} ({u.terraform[1]} turns)"
+        if u.carried_by:
+            status = "aboard transport"
+        if u.cargo:
+            status += f", carrying {len(u.cargo)}"
+        home = game.bases.get(u.home)
+        theme.text(surf, f"{status}" + (f"  | home: {home.name}" if home else ""), (x, y), 17, theme.TEXT_DIM)
+        y += 22
+        if u.owner != game.human_id:
+            return y
+        acts = []
+        if u.type.colony:
+            acts.append(("Found Base [B]", self.act_found, game.can_found_base(u)[0]))
+        if u.type.former:
+            for tf in game.terraform_options(u):
+                acts.append((f"{tf.name} [{tf.key.upper()}]", lambda k=tf.id: self.act_terraform(k), True))
+            acts.append(("Automate [A]", self.act_automate, True))
+        acts += [("Fortify [H]", self.act_fortify, True), ("Sentry [L]", self.act_sentry, True),
+                 ("Explore [E]", self.act_explore, True), ("Go to [G]", self.act_goto_mode, True),
+                 ("Wait [W]", self.act_wait, True), ("Skip [Space]", self.act_skip, True),
+                 ("Disband [Del]", self.act_disband, True)]
+        bw = (SIDE_W - 30) // 2
+        for i, (label, cb, en) in enumerate(acts):
+            bx = x - 2 + (i % 2) * (bw + 6)
+            self.ui.button(surf, (bx, y, bw, 24), label, cb, enabled=en, size=17)
+            if i % 2 == 1:
+                y += 28
+        if len(acts) % 2 == 1:
+            y += 28
+        return y + 6
+
+    def _tile_panel(self, surf, tile, x, y, end_y):
+        game = self.game
+        hid = game.human_id
+        tx, ty = tile
+        pygame.draw.line(surf, theme.PANEL_BORDER, (x - 4, y), (x + SIDE_W - 20, y))
+        y += 6
+        if not game.is_explored(hid, tx, ty):
+            theme.text(surf, "Unexplored", (x, y), 19, theme.TEXT_DIM)
+            return
+        t = game.world.tiles[tx][ty]
+        theme.text(surf, t.terrain_name(), (x, y), 19, theme.TEXT, bold=True)
+        y += 20
+        elev = f"{t.elevation}m"
+        n, m, e = game.tile_yield(t, hid, (tx, ty) in game.base_pos)
+        theme.text(surf, f"({tx},{ty})  {elev}", (x, y), 17, theme.TEXT_DIM)
+        r = theme.text(surf, f"N{n}", (x + 130, y), 18, theme.NUTRIENT, bold=True)
+        r = theme.text(surf, f"M{m}", (r.right + 8, y), 18, theme.MINERAL, bold=True)
+        theme.text(surf, f"E{e}", (r.right + 8, y), 18, theme.ENERGY, bold=True)
+        y += 20
+        extras = sorted(i for i in t.improvements)
+        if t.special:
+            extras.append(f"{t.special} bonus")
+        if t.supply_pod:
+            extras.append("supply pod")
+        if extras:
+            theme.text(surf, ", ".join(extras), (x, y), 17, theme.TEXT_DIM)
+            y += 18
+        if t.owner is not None:
+            theme.text(surf, f"Territory: {game.players[t.owner].name}", (x, y), 17, game.players[t.owner].color)
+            y += 18
+        b = game.base_at(tx, ty)
+        if b:
+            theme.text(surf, f"Base: {b.name} (size {b.pop})", (x, y), 18, game.players[b.owner].color, bold=True)
+            y += 20
+        if game.is_visible(hid, tx, ty):
+            for u in game.units_at(tx, ty)[:5]:
+                if y > end_y - 18:
+                    break
+                o = game.players[u.owner]
+                txt = f"{u.name} ({o.name if not o.is_native else 'native'})"
+                if self.selected and u.owner != hid and self.selected.owner == hid and game.can_attack(self.selected) \
+                        and game.world.distance(u.x, u.y, self.selected.x, self.selected.y) == 1:
+                    txt += f"  win {int(game.combat_odds(self.selected, tx, ty) * 100)}%"
+                theme.text(surf, txt, (x, y), 17, o.color)
+                y += 18
+
+    # ------------------------------------------------------------------
+    # Menus
+    # ------------------------------------------------------------------
+    def handle_menu_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self.ui.click(event.pos)
+        elif event.type == pygame.KEYDOWN:
+            if self.dialogs:
+                d = self.dialogs[-1]
+                if not d.on_key(event) and event.key == pygame.K_ESCAPE:
+                    d.close()
+            elif event.key == pygame.K_ESCAPE:
+                if self.state == "setup":
+                    self.state = "menu"
+                else:
+                    self.running = False
+            elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                if self.state == "setup":
+                    self.start_game()
+                else:
+                    self.state = "setup"
+
+    def _draw_space(self, surf):
+        w, h = surf.get_size()
+        surf.fill((6, 8, 16))
+        t = pygame.time.get_ticks() / 1000
+        for sx, sy, b in self.stars:
+            c = int(120 + 120 * b * (0.7 + 0.3 * math.sin(t * (1 + b) + sx * 20)))
+            surf.set_at((int(sx * w), int(sy * h)), (c, c, min(255, c + 20)))
+        # The planet
+        cx, cy, r = int(w * 0.78), int(h * 0.72), int(min(w, h) * 0.42)
+        for i in range(r, 0, -3):
+            f = i / r
+            col = theme.mix((40, 70, 60), (140, 110, 80), (1 - f) ** 0.6)
+            pygame.draw.circle(surf, col, (cx - int((1 - f) * r * 0.25), cy - int((1 - f) * r * 0.25)), i)
+        pygame.draw.circle(surf, (110, 200, 190), (cx, cy), r, 2)
+
+    def draw_menu(self, mouse):
+        surf = self.surf
+        self._draw_space(surf)
+        w, h = surf.get_size()
+        theme.text(surf, "NEW CIVILIZATION", (w // 2, h // 4), 84, theme.ACCENT, bold=True, center=True)
+        theme.text(surf, "Planetfall is only the beginning.", (w // 2, h // 4 + 58), 26, theme.TEXT_DIM, center=True)
+        bw, bh = 280, 44
+        y = h // 2 - 20
+        for label, cb in (("New Game", lambda: setattr(self, "state", "setup")),
+                          ("Load Game", lambda: self.open_dialog(LoadDialog(self))),
+                          ("Quit", self.quit)):
+            self.ui.button(surf, (w // 2 - bw // 2, y, bw, bh), label, cb, size=26)
+            y += bh + 12
+        for d in list(self.dialogs):
+            if d is self.dialogs[-1]:
+                self.ui.buttons = []
+            d.draw(surf, self.ui)
+
+    def draw_setup(self, mouse):
+        surf = self.surf
+        self._draw_space(surf)
+        w, h = surf.get_size()
+        pw, ph = min(1000, w - 40), min(640, h - 40)
+        r = pygame.Rect((w - pw) // 2, (h - ph) // 2, pw, ph)
+        theme.panel(surf, r, theme.PANEL, theme.PANEL_BORDER, alpha=235)
+        theme.text(surf, "Choose Your Faction", (r.x + 20, r.y + 14), 32, theme.ACCENT, bold=True)
+        y = r.y + 60
+        for f in FACTION_LIST:
+            sel = self.setup["faction"] == f.id
+            b = self.ui.button(surf, (r.x + 20, y, 330, 38), "", lambda fid=f.id: self.setup.__setitem__("faction", fid),
+                               selected=sel)
+            pygame.draw.rect(surf, f.color, (b.rect.x + 8, b.rect.y + 9, 20, 20))
+            theme.text(surf, f.name, (b.rect.x + 38, b.rect.y + 11), 22, theme.TEXT, bold=sel)
+            y += 44
+        f = FACTIONS[self.setup["faction"]]
+        dx = r.x + 380
+        theme.text(surf, f.name, (dx, r.y + 62), 30, f.color, bold=True)
+        theme.text(surf, f.leader, (dx, r.y + 94), 22, theme.TEXT_DIM)
+        theme.text_block(surf, f.description, (dx, r.y + 126, r.right - dx - 20, 80), 21, theme.TEXT)
+        y = r.y + 230
+        theme.text(surf, "Planet size", (dx, y), 22, theme.ACCENT, bold=True)
+        y += 28
+        for i, size in enumerate(MAP_SIZES):
+            mw, mh = MAP_SIZES[size]
+            self.ui.button(surf, (dx + i * 150, y, 140, 34), f"{size.title()} {mw}x{mh}",
+                           lambda s=size: self.setup.__setitem__("map", s), selected=self.setup["map"] == size, size=19)
+        y += 56
+        theme.text(surf, "Rival factions", (dx, y), 22, theme.ACCENT, bold=True)
+        y += 28
+        self.ui.button(surf, (dx, y, 34, 34), "-", lambda: self.setup.__setitem__("ai", max(1, self.setup["ai"] - 1)))
+        theme.text(surf, self.setup["ai"], (dx + 60, y + 7), 26, theme.TEXT, bold=True, center=False)
+        self.ui.button(surf, (dx + 90, y, 34, 34), "+", lambda: self.setup.__setitem__("ai", min(6, self.setup["ai"] + 1)))
+        y += 60
+        theme.text_block(surf, "Victory: Conquest (eliminate all rivals) or Transcendence (research Transcendence and "
+                               "complete the Ascension Engine).", (dx, y, r.right - dx - 20, 60), 19, theme.TEXT_DIM)
+        self.ui.button(surf, (r.right - 200, r.bottom - 60, 180, 44), "Start  [Enter]", self.start_game, size=24)
+        self.ui.button(surf, (r.right - 340, r.bottom - 60, 120, 44), "Back", lambda: setattr(self, "state", "menu"),
+                       size=24)
