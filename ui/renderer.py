@@ -90,21 +90,26 @@ def _rand_point(rng, tw, th, margin=0.15):
             return x, y
 
 
-def tile_sprite(world, t, tw):
+OCEAN_PHASES = 4
+
+
+def tile_sprite(world, t, tw, phase=0):
+    """phase animates the sea: each ocean tile cycles through OCEAN_PHASES wave patterns."""
     variant = (t.x * 7919 + t.y * 104729) % 4
     shade = tile_shade(world, t)
     kind = "deep" if t.is_ocean and not t.is_shelf else "shelf" if t.is_ocean else "land"
     imps = tuple(sorted(i for i in t.improvements if i != "road"))
+    wave = (phase + variant) % OCEAN_PHASES if t.is_ocean else 0
     key = (kind, t.rainfall, t.rockiness, t.fungus, variant, shade, imps, t.special, t.supply_pod,
-           t.elevation // 500, tw)
+           t.elevation // 500, tw, wave)
     spr = _sprites.get(key)
     if spr is None:
-        spr = _build_sprite(t, tw, variant, shade)
+        spr = _build_sprite(t, tw, variant, shade, wave)
         _sprites[key] = spr
     return spr
 
 
-def _build_sprite(t, tw, variant, shade):
+def _build_sprite(t, tw, variant, shade, wave=0):
     th = tw // 2
     s = pygame.Surface((tw, th), pygame.SRCALPHA)
     base = terrain_color(t)
@@ -113,10 +118,19 @@ def _build_sprite(t, tw, variant, shade):
     rng = random.Random(hash((t.is_ocean, t.rainfall, t.rockiness, t.fungus, variant)))
     k = tw / 64
     if t.is_ocean:
+        # Gentle swell: wave crests drift a little each animation phase.
+        wrng = random.Random(variant * 31 + 7)
+        drift = wave * tw / (OCEAN_PHASES * 6)
         for _ in range(int(10 * k * k) + 3):
-            x, y = _rand_point(rng, tw, th, 0.1)
-            w = rng.uniform(3, 8) * k
-            pygame.draw.line(s, theme.shade(lit, rng.choice((14, 22, -8))), (x - w, y), (x + w, y), 1)
+            x, y = _rand_point(wrng, tw, th, 0.1)
+            w = wrng.uniform(3, 8) * k
+            x += drift * (1 if wrng.random() < 0.5 else -1)
+            bright = (14, 22, -8)[(wrng.randrange(3) + wave) % 3]
+            pygame.draw.line(s, theme.shade(lit, bright), (x - w, y), (x + w, y), 1)
+        if t.elevation < -1500 and wave % 2 == 0:
+            for _ in range(2):
+                x, y = _rand_point(wrng, tw, th, 0.2)
+                pygame.draw.circle(s, theme.shade(lit, 26), (int(x), int(y)), max(1, int(k)))
     else:
         # mottled soil
         for _ in range(int(26 * k * k) + 6):
@@ -129,7 +143,24 @@ def _build_sprite(t, tw, variant, shade):
                 w = rng.uniform(8, 14) * k
                 pygame.draw.arc(s, theme.shade(lit, -24), (x - w, y - w / 3, 2 * w, w / 1.5), 0.3, math.pi - 0.3, 1)
                 pygame.draw.arc(s, theme.shade(lit, 18), (x - w, y - w / 3 + 1, 2 * w, w / 1.5), 0.5, math.pi - 0.5, 1)
-        if t.rockiness == ROCKY:
+        if t.rockiness == ROCKY and t.elevation >= 1800 and not t.fungus:
+            # A proper massif: two or three peaks, lit from the upper left, snow on the highest.
+            peaks = [(0.5, 0.62, 0.34), (0.3, 0.7, 0.24), (0.72, 0.72, 0.22)][: 2 + variant % 2]
+            snow = t.elevation >= 2600
+            for fx, fy, fh in sorted(peaks, key=lambda p: p[1]):
+                px, py = fx * tw, fy * th
+                h = fh * tw * (0.8 + t.elevation / 7000)
+                wdt = h * 1.1
+                left = [(px - wdt, py), (px, py - h), (px, py + h * 0.05)]
+                right = [(px, py - h), (px + wdt, py), (px, py + h * 0.05)]
+                pygame.draw.polygon(s, theme.shade(ROCK_COLOR, 25 + shade * 5), left)
+                pygame.draw.polygon(s, theme.shade(ROCK_COLOR, -35 + shade * 5), right)
+                if snow:
+                    cap = h * 0.35
+                    pygame.draw.polygon(s, (236, 240, 244), [(px - wdt * cap / h, py - h + cap), (px, py - h),
+                                                               (px + wdt * cap / h * 0.8, py - h + cap * 0.9),
+                                                               (px, py - h + cap * 0.7)])
+        elif t.rockiness == ROCKY:
             for _ in range(int(5 * k) + 3):
                 x, y = _rand_point(rng, tw, th, 0.2)
                 r = rng.uniform(3, 7) * k
@@ -546,20 +577,66 @@ class MapView:
         return self._fog[key]
 
     def _coasts(self):
+        """{tile: [edge directions]} where water meets land (surf on the sea side, sand on the land side)."""
         if self._coast is None:
             world = self.game.world
             coast = {}
             for t in world.all_tiles():
-                if t.is_ocean:
-                    dirs = []
-                    for d in ("NE", "SE", "SW", "NW"):
-                        p = world.step(t.x, t.y, d)
-                        if p and world.tiles[p[0]][p[1]].is_land:
-                            dirs.append(d)
-                    if dirs:
-                        coast[(t.x, t.y)] = dirs
+                dirs = []
+                for d in ("NE", "SE", "SW", "NW"):
+                    p = world.step(t.x, t.y, d)
+                    if p and world.tiles[p[0]][p[1]].is_land != t.is_land:
+                        dirs.append(d)
+                if dirs:
+                    coast[(t.x, t.y)] = dirs
             self._coast = coast
         return self._coast
+
+    def _cloud_sprite(self):
+        tw = self.tw
+        if ("cloud", tw) not in self._fog:
+            w, h = int(tw * 5), int(tw * 2.2)
+            s = pygame.Surface((w, h), pygame.SRCALPHA)
+            rng = random.Random(4)
+            for layer in range(4):
+                a = 9 + layer * 4
+                for _ in range(7):
+                    rx = rng.uniform(0.35, 0.7) * w / (1 + layer * 0.35)
+                    ry = rx * 0.35
+                    cx = rng.uniform(w * 0.3, w * 0.7)
+                    cy = rng.uniform(h * 0.35, h * 0.65)
+                    pygame.draw.ellipse(s, (0, 4, 8, a), (cx - rx, cy - ry, 2 * rx, 2 * ry))
+            self._fog[("cloud", tw)] = s
+        return self._fog[("cloud", tw)]
+
+    def _vignette(self):
+        key = ("vignette", self.rect.size)
+        if key not in self._fog:
+            w, h = self.rect.size
+            s = pygame.Surface((w, h), pygame.SRCALPHA)
+            steps = 18
+            for i in range(steps):
+                a = int(70 * (1 - i / steps) ** 2)
+                m = int(i * min(w, h) / (steps * 3.2))
+                pygame.draw.rect(s, (0, 0, 0, a), (m, m, w - 2 * m, h - 2 * m), max(1, int(min(w, h) / (steps * 3.2)) + 1))
+            self._fog[key] = s
+        return self._fog[key]
+
+    def _draw_clouds(self, surf, ticks):
+        cloud = self._cloud_sprite()
+        ww, wh = self.world_size()
+        cw, ch = cloud.get_size()
+        t = ticks / 1000.0
+        for i in range(9):
+            rng = random.Random(i * 97)
+            wx = (rng.uniform(0, ww) + t * self.tw * rng.uniform(0.05, 0.12)) % ww
+            wy = rng.uniform(0, wh)
+            sx = (wx - self.cam_x) % ww - cw / 2
+            sy = wy - self.cam_y - ch / 2
+            for off in (0, -ww):
+                x = self.rect.x + sx + off
+                if -cw < x - self.rect.x < self.rect.width and -ch < sy < self.rect.height:
+                    surf.blit(cloud, (x, self.rect.y + sy))
 
     def _visible_tiles(self):
         """(tile_x, tile_y, screen_cx, screen_cy) for every tile in view, back to front."""
@@ -598,12 +675,16 @@ class MapView:
         black = self._fog_sprite(tw, 255)
         bp = game.base_pos
 
-        # 1. terrain sprites (with improvements), coastline surf, roads
+        # 1. terrain sprites (with improvements), coastline surf and sand, roads
+        phase = (ticks // 650) % OCEAN_PHASES
         for tx, ty, cx, cy in tiles:
             if not explored[ty * W + tx]:
                 continue
             t = world.tiles[tx][ty]
-            surf.blit(tile_sprite(world, t, tw), (cx - hw, cy - hh))
+            surf.blit(tile_sprite(world, t, tw, phase), (cx - hw, cy - hh))
+        surf_w = max(1, tw // 32)
+        sand_w = max(2, tw // 18)
+        foam = theme.mix((150, 200, 210), (230, 245, 250), 0.5 + 0.5 * math.sin(ticks / 500))
         for tx, ty, cx, cy in tiles:
             if not explored[ty * W + tx]:
                 continue
@@ -611,8 +692,12 @@ class MapView:
             dirs = coasts.get((tx, ty))
             if dirs:
                 for d in dirs:
-                    a, b = edge_points(cx, cy, tw, d, inset=2)
-                    pygame.draw.line(surf, (150, 200, 210), a, b, max(1, tw // 32))
+                    if t.is_ocean:
+                        a, b = edge_points(cx, cy, tw, d, inset=2)
+                        pygame.draw.line(surf, foam, a, b, surf_w)
+                    elif not t.fungus:
+                        a, b = edge_points(cx, cy, tw, d, inset=sand_w // 2 + 1)
+                        pygame.draw.line(surf, (196, 172, 118), a, b, sand_w)
             draw_roads(surf, world, t, cx, cy, tw, bp)
 
         # 2. bases (under the fog, so remembered bases show dimmed)
@@ -667,7 +752,11 @@ class MapView:
             else:
                 draw_unit(surf, game, top, cx, cy, tw, len(units), is_sel)
 
-        # 6. goto path preview, hover outline
+        # 6. drifting cloud shadows and a soft vignette for atmosphere
+        self._draw_clouds(surf, ticks)
+        surf.blit(self._vignette(), rect.topleft)
+
+        # 7. goto path preview, hover outline
         if path and selected:
             from game.pathfinding import turns_for_path
             for i, (px, py) in enumerate(path):

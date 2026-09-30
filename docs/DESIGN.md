@@ -127,7 +127,7 @@ Existing Transcendence victory → becomes the final milestone of a longer track
 1. ~~Smarter AI: military (naval invasions, task forces), then diplomacy (trades, pacts, memory).~~ First pass done:
    `game/ai_military.py` (war plans, gathering, sieges, naval landings) and `game/diplomacy.py` (attitude, memory,
    pacts, trades, offers to the player, victory-race awareness).
-2. Social engineering (prerequisite for the cultural track, and it adds economic levers).
+2. ~~Social engineering (prerequisite for the cultural track, and it adds economic levers).~~ Done: `game/society.py`.
 3. Economic track: trade routes → markets/GDP → currency bloc → buyouts → victory + AI use.
 4. Cultural track: influence → legacy works → ideology adoption → victory + AI use.
 5. Phase system + the planet awakens.

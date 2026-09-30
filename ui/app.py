@@ -35,6 +35,7 @@ ACTION_TIPS = {
 from .renderer import MapView
 from .widgets import UI, Button
 
+GAME_TITLE = "New Civilization"
 TOP_H = 34
 SIDE_W = 290
 SAVE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "saves")
@@ -72,6 +73,8 @@ class App:
         self.minimap_geom = None
         self.setup = {"faction": "concord", "map": "standard", "ai": 3}
         self.stars = [(random.random(), random.random(), random.random()) for _ in range(180)]
+        self.globe = None
+        self._caption = None
 
     # ------------------------------------------------------------------
     # Main loop
@@ -517,7 +520,19 @@ class App:
     # ------------------------------------------------------------------
     # Drawing
     # ------------------------------------------------------------------
+    def update_caption(self):
+        """Window title: the game's name, plus your faction and the date while playing."""
+        if self.state == "game" and self.game:
+            p = self.game.human
+            caption = f"{GAME_TITLE}  -  {p.name}  -  Mission Year {self.game.year}"
+        else:
+            caption = f"{GAME_TITLE}  -  Planetfall is only the beginning"
+        if caption != self._caption:
+            pygame.display.set_caption(caption)
+            self._caption = caption
+
     def draw(self):
+        self.update_caption()
         mouse = pygame.mouse.get_pos()
         self.ui.begin(mouse)
         if self.state == "game":
@@ -834,18 +849,23 @@ class App:
 
     def _draw_space(self, surf):
         w, h = surf.get_size()
-        surf.fill((6, 8, 16))
+        surf.fill((4, 6, 14))
         t = pygame.time.get_ticks() / 1000
         for sx, sy, b in self.stars:
             c = int(120 + 120 * b * (0.7 + 0.3 * math.sin(t * (1 + b) + sx * 20)))
             surf.set_at((int(sx * w), int(sy * h)), (c, c, min(255, c + 20)))
-        # The planet
-        cx, cy, r = int(w * 0.78), int(h * 0.72), int(min(w, h) * 0.42)
-        for i in range(r, 0, -3):
-            f = i / r
-            col = theme.mix((40, 70, 60), (140, 110, 80), (1 - f) ** 0.6)
-            pygame.draw.circle(surf, col, (cx - int((1 - f) * r * 0.25), cy - int((1 - f) * r * 0.25)), i)
-        pygame.draw.circle(surf, (110, 200, 190), (cx, cy), r, 2)
+        # Alpha Centauri A and B, far away
+        for (fx, fy, rad, col) in ((0.12, 0.16, 5, (255, 236, 190)), (0.15, 0.13, 3, (255, 200, 150))):
+            for i in range(6, 0, -1):
+                glow = pygame.Surface((rad * 8 * 2, rad * 8 * 2), pygame.SRCALPHA)
+                pygame.draw.circle(glow, (*col, 12), (rad * 8, rad * 8), rad * i * 1.3)
+                surf.blit(glow, (fx * w - rad * 8, fy * h - rad * 8))
+            pygame.draw.circle(surf, col, (int(fx * w), int(fy * h)), rad)
+        size = int(min(w, h) * 0.78)
+        if self.globe is None or self.globe.d != size:
+            from .globe import Globe
+            self.globe = Globe(size)
+        self.globe.draw(surf, (int(w * 0.8), int(h * 0.78)), (t / 90) % 1.0)
 
     def draw_menu(self, mouse):
         surf = self.surf
