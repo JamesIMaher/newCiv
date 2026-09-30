@@ -13,7 +13,7 @@ class Player:
         self.faction_id = faction_id
         self.is_human = is_human
         self.alive = True
-        self.credits = 20
+        self.credits = 60
         self.research_progress = 0
         self.current_tech = None
         self.techs = set()

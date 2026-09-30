@@ -117,8 +117,8 @@ class UnitType:
 
 UNIT_LIST = [
     UnitType("scout", "Scout Patrol", 10, 1, 1, 1, symbol="S", obsolete_by="laser_squad"),
-    UnitType("colony_pod", "Colony Pod", 30, 0, 1, 1, symbol="C", colony=True),
-    UnitType("former", "Former", 30, 0, 1, 1, symbol="F", former=True),
+    UnitType("colony_pod", "Colony Pod", 20, 0, 1, 1, symbol="C", colony=True),
+    UnitType("former", "Former", 24, 0, 1, 1, symbol="F", former=True),
     UnitType("laser_squad", "Laser Squad", 20, 2, 1, 1, prereq="applied_physics", symbol="L", obsolete_by="impact_rover"),
     UnitType("synth_garrison", "Synthmetal Garrison", 20, 1, 2, 1, prereq="industrial_base", symbol="G", obsolete_by="plasma_garrison"),
     UnitType("speeder", "Laser Speeder", 30, 2, 1, 2, prereq="doctrine_mobility", symbol="R", obsolete_by="impact_rover"),

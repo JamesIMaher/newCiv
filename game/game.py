@@ -12,6 +12,10 @@ START_YEAR = 2101
 BASE_POP_CAP = 7
 CONTENT_BASE = 4
 FREE_SUPPORT = 2
+# Planetfall: for the first turns, landing supplies from orbit boost every base so the opening moves fast.
+LANDING_TURNS = 40
+LANDING_MINERALS = 1
+LANDING_NUTRIENTS = 1
 SIGHT_UNIT = 2
 SIGHT_BASE = 3
 
@@ -145,7 +149,7 @@ class Game:
     def tech_cost(self, pid, tech_id=None):
         p = self.players[pid]
         n = len(p.techs)
-        cost = 20 + 11 * (n ** 1.35)
+        cost = 12 + 11 * (n ** 1.35)
         if tech_id:
             knowers = sum(1 for q in self.players
                           if q.alive and q.id != pid and not q.is_native and p.has_contact(q.id) and tech_id in q.techs)
@@ -283,7 +287,8 @@ class Game:
         return cap
 
     def growth_threshold(self, base):
-        return 8 + base.pop * 7
+        # Cheap early growth, steeper for big bases: 10, 18, 26, 36, 46 ... 186 at size 14.
+        return 4 + 6 * base.pop + base.pop * base.pop // 2
 
     def workable_tiles(self, base):
         taken = set()
@@ -340,6 +345,10 @@ class Game:
             m += tm
             e += te
         e += base.specialists * 2
+        landing = self.turn <= LANDING_TURNS
+        if landing:
+            n += LANDING_NUTRIENTS
+            m += LANDING_MINERALS
 
         supported = [u for u in self.units.values() if u.home == base.id]
         free = FREE_SUPPORT + (1 if p.bonus("police") else 0)
@@ -389,7 +398,7 @@ class Game:
             "minerals_net": 0 if rioting else m_net, "energy": e, "inefficiency": loss,
             "econ": 0 if rioting else econ, "psych": psych, "labs": 0 if rioting else labs,
             "upkeep": upkeep, "drones": drones, "rioting": rioting,
-            "growth_threshold": self.growth_threshold(base), "pop_cap": self.pop_cap(base),
+            "growth_threshold": self.growth_threshold(base), "pop_cap": self.pop_cap(base), "landing": landing,
         }
         base.last_report = report
         base.rioting = rioting

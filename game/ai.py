@@ -69,7 +69,8 @@ def choose_production(game, base):
     war = at_war_with_anyone(game, p)
 
     defenders = len(defenders_at(game, base))
-    if defenders == 0 or (war and defenders < 2 and base.pop >= 3):
+    early = game.turn <= 12 and not war  # rush expansion during planetfall; worms appear later
+    if (defenders == 0 and not early) or (war and defenders < 2 and base.pop >= 3):
         uid = best_unit(game, p.id, "defend")
         if uid:
             base.production = ("unit", uid)
@@ -78,8 +79,8 @@ def choose_production(game, base):
     pods = sum(1 for u in units if u.type.colony) + sum(
         1 for b in bases if b.production == ("unit", "colony_pod") and b.id != base.id)
     want_bases = 5 + int((f.expansion if f else 0.5) * 10)
-    if (base.pop >= 2 and pods < 2 and len(bases) < want_bases and not p.ai_state.get("no_sites")
-            and not (p.is_human and pods >= 1)):
+    if ((base.pop >= 2 or early) and pods < 2 and len(bases) < want_bases and not p.ai_state.get("no_sites")
+            and not (p.is_human and pods >= (2 if early else 1))):
         base.production = ("unit", "colony_pod")
         return
 

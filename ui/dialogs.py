@@ -178,6 +178,12 @@ class BaseDialog(Dialog):
                         (x + 20, y), 20, theme.MINERAL)
         ui.hotspot(pygame.Rect(x, y, rr.right - x, 20), lore.RESOURCES["minerals"]["text"])
         y += 20
+        if rep.get("landing"):
+            from game.game import LANDING_TURNS, START_YEAR
+            rr = theme.text(surf, "Landing supplies: +1 nutrient, +1 mineral", (x, y), 16, theme.GOLD)
+            ui.hotspot(rr, "Supplies dropped from the colony ship in orbit keep every base fed and building during "
+                           f"planetfall, until M.Y. {START_YEAR + LANDING_TURNS - 1}. Use them to expand quickly.")
+            y += 18
         theme.text(surf, f"Unit support cost: {rep['support']}" + ("  (riot: nothing built!)" if rep["rioting"] else ""),
                    (x, y), 17, theme.TEXT_DIM)
         y += 24

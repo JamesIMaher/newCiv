@@ -123,7 +123,8 @@ UNITS = {
     "colony_pod": {
         "role": "Settler",
         "text": "A packed habitat module with a crew and seed stock. It founds a new base where it stands (B). "
-                "Building one takes a citizen from the base, so the base must be size 2 or larger.",
+                "Building one takes a citizen from the base, so the base must be size 2 or larger. You can start "
+                "building one in a size-1 base; it will wait for the base to grow.",
         "pros": ["The only way to found new bases", "More bases mean more of everything"],
         "cons": ["Cannot defend itself; escort it", "Costs the building base 1 population"],
         "quote": ("\"Every base is a promise we make to people not yet born.\"",
@@ -386,6 +387,11 @@ CONCEPTS = [
      "biosphere that is stranger than anyone expected.\n\n"
      "Your first moves: found a base with a Colony Pod (B), send your Scout Patrols to explore (E), and set your "
      "Former to automate (A). Then pick a technology to research (F3)."),
+    ("Planetfall and Landing Supplies",
+     "For the first 40 turns the colony ship in orbit drops supplies: every base gets +1 nutrient and +1 mineral. "
+     "Colony Pods are cheap (20 minerals) and small bases grow quickly, so this is the time to expand. Aim for "
+     "several bases before the supplies run out, and keep a defender nearby once the Xenoworms start to stir. "
+     "You also start with 60 energy credits; rush-buying an early Colony Pod is a strong opening."),
     ("Bases",
      "Bases are your cities. Each one has citizens who work the tiles around it: the 21-tile 'fat cross'. "
      "Every worked tile produces Nutrients, Minerals and Energy. The base governor places citizens "
