@@ -111,7 +111,7 @@ Existing Transcendence victory → becomes the final milestone of a longer track
   phase system will spread the game over 400–500 turns as that content arrives. It is not stretched yet, because
   there's no new content to fill the time.
 
-## AI roadmap (next build target)
+## AI roadmap (first pass implemented)
 
 - **Naval invasions:** load transports, escort them, land beside targets, and establish beachheads.
 - **Coordinated attacks:** group units into task forces with siege targets, and gather before striking instead of
@@ -124,7 +124,9 @@ Existing Transcendence victory → becomes the final milestone of a longer track
 
 ## Proposed build order
 
-1. Smarter AI: military (naval invasions, task forces), then diplomacy (trades, pacts, memory).
+1. ~~Smarter AI: military (naval invasions, task forces), then diplomacy (trades, pacts, memory).~~ First pass done:
+   `game/ai_military.py` (war plans, gathering, sieges, naval landings) and `game/diplomacy.py` (attitude, memory,
+   pacts, trades, offers to the player, victory-race awareness).
 2. Social engineering (prerequisite for the cultural track, and it adds economic levers).
 3. Economic track: trade routes → markets/GDP → currency bloc → buyouts → victory + AI use.
 4. Cultural track: influence → legacy works → ideology adoption → victory + AI use.

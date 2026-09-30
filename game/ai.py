@@ -3,6 +3,7 @@
 The AI is intentionally straightforward: expand, develop, defend, and attack when it
 feels strong. It uses the same public rules API as the human player.
 """
+from . import ai_military, diplomacy
 from .data import UNITS, FACILITIES, PROJECTS, TECHS
 from .entities import MOVE_POINTS, NATIVE_ID
 from .pathfinding import find_path, reachable
@@ -90,7 +91,14 @@ def choose_production(game, base):
         base.production = ("unit", "former")
         return
 
-    if war and game.rng.random() < 0.4 + (f.aggression if f else 0.5) * 0.3:
+    op = p.ai_state.get("op") or {}
+    if op.get("need_transport") == base.id and game.is_coastal(base) and ("unit", "transport") in opt_set:
+        base.production = ("unit", "transport")
+        return
+    wanted = ai_military.attackers_wanted(game, p)
+    have = sum(1 for u in units if ai_military.is_offensive(u))
+    if wanted and have < wanted and rep["minerals_net"] >= 2 and \
+            game.rng.random() < 0.5 + (f.aggression if f else 0.5) * 0.4:
         uid = best_unit(game, p.id, "attack")
         if uid:
             base.production = ("unit", uid)
@@ -146,41 +154,6 @@ def choose_production(game, base):
 
 
 # ----------------------------------------------------------------------
-# Diplomacy
-# ----------------------------------------------------------------------
-def consider_peace(game, p, other_id):
-    started = p.war_turns.get(other_id, game.turn)
-    if game.turn - started < 5:
-        return False
-    mine = military_strength(game, p.id)
-    theirs = military_strength(game, other_id)
-    aggression = p.faction.aggression if p.faction else 0.5
-    if mine < theirs * 0.9:
-        return True
-    return game.rng.random() < 0.5 * (1 - aggression)
-
-
-def ai_diplomacy(game, p):
-    f = p.faction
-    for other_id, rel in list(p.relations.items()):
-        o = game.players[other_id]
-        if not o.alive:
-            continue
-        if rel == "peace" and game.turn > 30:
-            mine = military_strength(game, p.id)
-            theirs = max(1, military_strength(game, other_id))
-            near = any(game.world.distance(a.x, a.y, b.x, b.y) < 14
-                       for a in game.player_bases(p.id) for b in game.player_bases(other_id))
-            chance = 0.02 * f.aggression * min(3.0, mine / theirs)
-            if near and mine > theirs * 1.2 and game.rng.random() < chance:
-                game.declare_war(p.id, other_id)
-        elif rel == "war" and not o.is_human:
-            started = p.war_turns.get(other_id, 0)
-            if game.turn - started > 12 and game.rng.random() < 0.08 * (1.2 - f.aggression):
-                game.make_peace(p.id, other_id)
-
-
-# ----------------------------------------------------------------------
 # Turn driver
 # ----------------------------------------------------------------------
 def take_turn(game, p):
@@ -193,7 +166,8 @@ def take_turn(game, p):
     labs = min(10 - psych, int(4 + sci * 3))
     p.alloc = [10 - psych - labs, psych, labs]
 
-    ai_diplomacy(game, p)
+    ai_military.plan_wars(game, p)
+    diplomacy.ai_diplomacy(game, p)
 
     for b in bases:
         if b.production not in game.production_options(b):
@@ -210,9 +184,10 @@ def take_turn(game, p):
         if 0 < c <= p.credits - reserve:
             game.buy_production(b)
 
+    controlled = ai_military.run_operation(game, p)
     order = sorted(game.player_units(p.id), key=lambda u: (not u.type.colony, u.id))
     for u in order:
-        if u.id in game.units:
+        if u.id in game.units and u.id not in controlled:
             act_unit(game, u)
 
 

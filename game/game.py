@@ -1,7 +1,7 @@
 """The rules engine. Pure Python - no pygame - so it can be tested and simulated headless."""
 import random
 
-from . import ai
+from . import ai, diplomacy
 from .data import TECHS, UNITS, FACILITIES, PROJECTS, TERRAFORMS, FACTIONS, FACTION_LIST, ERAS
 from .entities import Player, Base, Unit, MOVE_POINTS, MAX_HP, NATIVE_ID
 from .pathfinding import find_path
@@ -41,6 +41,7 @@ class Game:
         self.winner = None       # (pid, victory type)
         self.dirty_tiles = set()  # tiles whose appearance changed (for the renderer)
         self.human_id = None
+        self.proposals = []      # offers from AI factions awaiting the human's answer
 
         self.players.append(Player(NATIVE_ID, None, False, w, h))
         others = [f.id for f in FACTION_LIST if f.id != human_faction]
@@ -525,14 +526,23 @@ class Game:
         self.notify(a, f"Contact established with the {pb.name}.")
         self.notify(b, f"Contact established with the {pa.name}.")
 
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__dict__.setdefault("proposals", [])
+
     def declare_war(self, a, b):
         pa, pb = self.players[a], self.players[b]
         if pa.relations.get(b) == "war":
             return
+        broke_pact = pa.relations.get(b) == "pact"
         pa.relations[b] = "war"
         pb.relations[a] = "war"
         pa.war_turns[b] = pb.war_turns[a] = self.turn
-        self.notify(None, f"The {pa.name} has declared war on the {pb.name}!")
+        self.proposals = [pr for pr in self.proposals if {pr["from"], self.human_id} != {a, b}]
+        self.notify(None, f"The {pa.name} has declared war on the {pb.name}!"
+                          + (" The pact between them is broken." if broke_pact else ""))
+        diplomacy.on_war_declared(self, a, b, broke_pact)
+        diplomacy.on_join_war(self, a, b)
 
     def make_peace(self, a, b):
         pa, pb = self.players[a], self.players[b]
@@ -540,17 +550,31 @@ class Game:
         pb.relations[a] = "peace"
         pa.war_turns.pop(b, None)
         pb.war_turns.pop(a, None)
+        diplomacy.adjust(self, a, b, 8, "made peace with us")
+        diplomacy.adjust(self, b, a, 8, "made peace with us")
         self.notify(None, f"The {pa.name} and the {pb.name} have signed a peace treaty.")
 
     def propose_peace(self, a, b):
-        """Player a asks player b for peace. AI decides; returns True if accepted."""
+        """Player a asks player b for peace. Returns (accepted, reason)."""
         pb = self.players[b]
         if pb.is_human:
-            return False
-        if ai.consider_peace(self, pb, a):
+            return False, ""
+        ok, why = diplomacy.will_accept_peace(self, b, a)
+        if ok:
             self.make_peace(a, b)
-            return True
-        return False
+        return ok, why
+
+    def board(self, unit, transport):
+        """Load a land unit onto a transport sharing its tile (e.g. in port)."""
+        if (unit.carried_by or unit.type.domain != "land" or not transport.type.capacity
+                or unit.owner != transport.owner or (unit.x, unit.y) != (transport.x, transport.y)
+                or len(transport.cargo) >= transport.type.capacity):
+            return False
+        transport.cargo.append(unit.id)
+        unit.carried_by = transport.id
+        unit.orders = "sentry"
+        unit.moves_left = 0
+        return True
 
     # ------------------------------------------------------------------
     # Movement
@@ -839,6 +863,7 @@ class Game:
         if defender.hp <= 0:
             winner, loser = attacker, defender
             self.notify(ap.id, f"Your {attacker.name} destroyed a {dp.name} {defender.name}.", pos)
+            diplomacy.adjust(self, dp.id, ap.id, -4, f"destroyed our {defender.name}")
             self.notify(dp.id, f"Your {defender.name} was destroyed by a {ap.name} {attacker.name}.", pos)
             if defender.type.native and not ap.is_native:
                 ap.credits += 10
@@ -952,6 +977,7 @@ class Game:
             np_.hq_base = base.id
         ai.choose_production(self, base)
         self.notify(None, f"The {np_.name} captured {base.name} from the {op.name}!", (base.x, base.y))
+        diplomacy.adjust(self, old, new_owner, -25, f"captured {base.name}")
         self.update_territory()
         self.assign_workers(base)
         self.update_visibility(new_owner)
@@ -1145,6 +1171,7 @@ class Game:
             self._process_player(p)
         self._process_units()
         self._spawn_natives()
+        diplomacy.update(self)
         self.update_territory()
         for p in self.players:
             if not p.is_native and p.alive:

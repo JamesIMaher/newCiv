@@ -447,8 +447,24 @@ CONCEPTS = [
      "faction's territory, and your bases cannot work tiles inside theirs."),
     ("Diplomacy",
      "Once your units or bases see another faction, you are in contact and start at peace. While at peace you "
-     "cannot attack them. Declare war or propose peace on the Diplomacy screen (F4). Aggressive factions "
-     "declare war when they think they are stronger than you."),
+     "cannot attack them. On the Diplomacy screen (F4) you can declare war, propose peace, form a pact, trade or "
+     "buy technology, and send gifts.\n\n"
+     "Every faction has an attitude towards you, from Hostile to Friendly, and remembers why: wars you started, "
+     "pacts you broke, units you destroyed, bases you took, gifts and trades, enemies you share, and borders that "
+     "press against theirs. Attitude decides whether they trade, ally with you, accept peace, or quietly start "
+     "massing forces for a war."),
+    ("Pacts",
+     "A pact is an alliance. Partners share their maps, and when one is attacked the other is expected to join the "
+     "war; computer factions honour their pacts. Breaking a pact by attacking your partner is remembered for a "
+     "long time."),
+    ("Victory Race",
+     "Every faction watches for a runaway leader. If one faction gets close to winning, whether by nearing "
+     "Transcendence or by controlling too many bases, the others turn against it: they refuse it technology, ally "
+     "against it, and plan wars to stop it. The Status (F5) and Diplomacy screens show who is leading."),
+    ("Transports and Invasions",
+     "To cross the sea, build a Transport Foil in a coastal base. Load land units by moving them onto the "
+     "transport at sea, or press O (Board) while both are in port. Move the transport next to the target coast, "
+     "then move each unit onto the land. Computer factions do the same. Watch your coastline."),
     ("Secret Projects",
      "World wonders. Only one faction can ever complete each one, so if a rival finishes first, your "
      "investment switches to something else. Each gives a powerful faction-wide benefit."),

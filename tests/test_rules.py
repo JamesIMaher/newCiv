@@ -246,3 +246,73 @@ def test_descriptions_build_for_everything(game):
     for t in game.world.all_tiles():
         assert describe.tile_description(t)
     assert all(entries for entries in datalinks_entries().values())
+
+
+def test_war_declaration_is_remembered_and_allies_join(game):
+    from game import diplomacy
+    a, b, c = 1, 2, 3
+    for x, y in ((a, b), (a, c), (b, c)):
+        game.make_contact(x, y)
+    diplomacy.form_pact(game, b, c)
+    game.declare_war(a, b)
+    assert diplomacy.attitude(game, b, a) < -30
+    assert any("declared war" in m[2] for m in game.players[b].memory)
+    assert game.players[c].relations[a] == "war"      # AI ally honours the pact
+
+
+def test_breaking_a_pact_hurts_more(game):
+    from game import diplomacy
+    game.make_contact(1, 2)
+    diplomacy.form_pact(game, 1, 2)
+    before = diplomacy.attitude(game, 2, 1)
+    game.declare_war(1, 2)
+    assert diplomacy.attitude(game, 2, 1) <= before - 55
+
+
+def test_tech_trade_and_purchase(game):
+    from game import diplomacy
+    game.make_contact(1, 2)
+    game.players[2].attitude[1] = 40
+    game.players[1].techs.add("biogenetics")
+    game.players[2].techs.add("industrial_base")
+    ok, _ = diplomacy.will_swap(game, 2, 1, "industrial_base", "biogenetics")
+    assert ok
+    diplomacy.swap_techs(game, 2, 1, "industrial_base", "biogenetics")
+    assert "industrial_base" in game.players[1].techs and "biogenetics" in game.players[2].techs
+    game.players[2].techs.add("social_psych")
+    price, _ = diplomacy.tech_price(game, 2, 1, "social_psych")
+    game.players[1].credits = price
+    diplomacy.sell_tech(game, 2, 1, "social_psych", price)
+    assert "social_psych" in game.players[1].techs and game.players[1].credits == 0
+
+
+def test_board_transport_in_port(game):
+    clear_units(game)
+    flatten(game, 10, 10)
+    game.world.tiles[11][10].elevation = -400
+    pod = game._create_unit("colony_pod", 1, 10, 10)
+    game.found_base(pod)
+    tr = game._create_unit("transport", 1, 10, 10)
+    inf = game._create_unit("laser_squad", 1, 10, 10)
+    assert game.board(inf, tr)
+    assert game.move_unit(tr, 11, 10) == "moved"
+    assert (inf.x, inf.y) == (11, 10)
+
+
+def test_proposals_resolve(game):
+    from game import diplomacy
+    game.make_contact(1, 2)
+    game.declare_war(2, 1)
+    game.proposals.append({"from": 2, "kind": "peace"})
+    diplomacy.resolve_proposal(game, game.proposals[0], True)
+    assert game.players[1].relations[2] == "peace" and not game.proposals
+
+
+def test_ai_wars_capture_bases():
+    g = Game("concord", num_ai=4, map_size="small", seed=11, all_ai=True)
+    for _ in range(140):
+        ai.take_turn(g, g.players[1])
+        g.end_turn()
+        if g.winner:
+            break
+    assert any("captured" in m[2] or "destroyed" in m[2] for m in g.log)

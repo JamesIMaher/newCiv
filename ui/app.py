@@ -14,7 +14,8 @@ from . import theme
 from game import lore
 from . import describe
 from .dialogs import (BaseDialog, TechDialog, EconomyDialog, DiplomacyDialog, StatusDialog, HelpDialog,
-                      GameMenuDialog, GameOverDialog, LoadDialog, DatalinksDialog, DiscoveryDialog)
+                      GameMenuDialog, GameOverDialog, LoadDialog, DatalinksDialog, DiscoveryDialog,
+                      ProposalDialog)
 
 ACTION_TIPS = {
     "Found Base": "Turn this Colony Pod into a new base on this tile. Bases must be at least 3 tiles apart and "
@@ -28,6 +29,8 @@ ACTION_TIPS = {
     "Skip": "This unit does nothing this turn.",
     "Disband": "Permanently remove this unit. Frees its home base from paying its upkeep.",
     "Next unit": "Jump to the next unit that is waiting for orders.",
+    "Board": "Load this unit onto the transport in this base. It sails with the transport; move it onto "
+             "land next to the transport to go ashore.",
 }
 from .renderer import MapView
 from .widgets import UI, Button
@@ -293,6 +296,17 @@ class App:
         else:
             self.show_toast(f"Cannot {TERRAFORMS[kind].name.lower()} here.", theme.WARN)
 
+    def act_board(self):
+        u = self.selected
+        if not u:
+            return
+        for t in self.game.units_at(u.x, u.y):
+            if t.owner == u.owner and self.game.board(u, t):
+                self.show_toast(f"{u.name} boards the {t.name}. Move the transport to carry it.")
+                self._after_action()
+                return
+        self.show_toast("No transport with room here.", theme.WARN)
+
     def act_disband(self):
         u = self.selected
         if u:
@@ -336,6 +350,8 @@ class App:
             self.open_dialog(TechDialog(self))
         if new_techs or new_projects:
             self.open_dialog(DiscoveryDialog(self, new_techs, new_projects))
+        if game.proposals:
+            self.open_dialog(ProposalDialog(self))
         self.show_toast(f"Mission Year {game.year}")
         self._check_game_over()
 
@@ -484,6 +500,8 @@ class App:
             self.act_automate()
         elif key == pygame.K_DELETE:
             self.act_disband()
+        elif key == pygame.K_o:
+            self.act_board()
         elif u.type.former:
             for tf in TERRAFORMS.values():
                 if key == pygame.key.key_code(tf.key):
@@ -706,6 +724,9 @@ class App:
             for tf in game.terraform_options(u):
                 acts.append((f"{tf.name} [{tf.key.upper()}]", lambda k=tf.id: self.act_terraform(k), True))
             acts.append(("Automate [A]", self.act_automate, True))
+        if u.type.domain == "land" and not u.carried_by and any(
+                t.type.capacity and t.owner == u.owner and len(t.cargo) < t.type.capacity for t in game.units_at(u.x, u.y)):
+            acts.append(("Board [O]", self.act_board, True))
         acts += [("Fortify [H]", self.act_fortify, True), ("Sentry [L]", self.act_sentry, True),
                  ("Explore [E]", self.act_explore, True), ("Go to [G]", self.act_goto_mode, True),
                  ("Wait [W]", self.act_wait, True), ("Skip [Space]", self.act_skip, True),

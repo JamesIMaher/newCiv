@@ -1,7 +1,7 @@
 """Modal windows: base screen, research, economy, diplomacy, status, help and menus."""
 import pygame
 
-from game import lore
+from game import diplomacy, lore
 from game.data import TECHS, UNITS, FACILITIES, PROJECTS, TERRAFORMS, FACTIONS, ERAS
 from game.victory import VICTORY_CONDITIONS
 from . import describe, theme
@@ -574,47 +574,197 @@ class EconomyDialog(Dialog):
 
 # ---------------------------------------------------------------------------
 class DiplomacyDialog(Dialog):
-    width, height = 820, 560
+    width, height = 1000, 680
     title = "Diplomacy"
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.result = ""
 
     def draw(self, surf, ui):
         r = self.frame(surf, ui)
         game = self.game
         me = game.human
-        x, y = r.x + 16, r.y + 50
+        x, y = r.x + 16, r.y + 48
         others = [p for p in game.players if not p.is_native and p.id != me.id]
+        row_h = min(122, (r.height - 90) // max(1, len(others)))
+        lead = diplomacy.leader(game)
         for p in others:
-            rr = pygame.Rect(x, y, r.width - 32, 70)
+            rr = pygame.Rect(x, y, r.width - 32, row_h - 8)
             theme.panel(surf, rr, theme.PANEL_LIGHT, None)
             pygame.draw.rect(surf, p.color, (rr.x, rr.y, 8, rr.height))
             if not me.has_contact(p.id):
                 theme.text(surf, "Unknown faction", (rr.x + 18, rr.y + 10), 22, theme.TEXT_DIM, bold=True)
-                theme.text(surf, "You have not made contact yet.", (rr.x + 18, rr.y + 38), 18, theme.TEXT_DIM)
-            else:
-                f = p.faction
-                status = "ELIMINATED" if not p.alive else me.relations[p.id].upper()
-                col = theme.WARN if status == "WAR" else theme.GOOD if status == "PEACE" else theme.TEXT_DIM
-                theme.text(surf, f"{f.name}", (rr.x + 18, rr.y + 8), 22, p.color, bold=True)
-                theme.text(surf, f"{f.leader}", (rr.x + 18, rr.y + 32), 18, theme.TEXT_DIM)
-                theme.text(surf, status, (rr.x + 330, rr.y + 10), 22, col, bold=True)
-                nb = len(game.player_bases(p.id))
-                theme.text(surf, f"{nb} bases   score {game.score(p.id)}", (rr.x + 330, rr.y + 38), 18, theme.TEXT_DIM)
-                if p.alive:
-                    if status == "PEACE":
-                        ui.button(surf, (rr.right - 170, rr.y + 20, 156, 30), "Declare War",
-                                  lambda p=p: game.declare_war(me.id, p.id))
+                theme.text(surf, "You have not made contact yet.", (rr.x + 18, rr.y + 36), 18, theme.TEXT_DIM)
+                y += row_h
+                continue
+            f = p.faction
+            rel = me.relations[p.id]
+            status = "ELIMINATED" if not p.alive else rel.upper()
+            col = {"WAR": theme.WARN, "PEACE": theme.GOOD, "PACT": theme.ACCENT}.get(status, theme.TEXT_DIM)
+            theme.text(surf, f.name, (rr.x + 18, rr.y + 6), 22, p.color, bold=True)
+            theme.text(surf, f.leader, (rr.x + 18, rr.y + 28), 17, theme.TEXT_DIM)
+            theme.text(surf, status, (rr.x + 290, rr.y + 6), 22, col, bold=True)
+            att = diplomacy.attitude(game, p.id, me.id)
+            word, wcol = diplomacy.attitude_word(att)
+            ar = theme.text(surf, f"Attitude: {word}", (rr.x + 290, rr.y + 30), 18, wcol, bold=True)
+            ui.hotspot(ar, f"How the {p.name} feel about you ({att:+.0f} on a scale of -100 to +100). "
+                           "It shapes whether they trade, ally, make peace, or plan war against you.")
+            nb = len(game.player_bases(p.id))
+            info = f"{nb} bases   {len(p.techs)} techs   score {game.score(p.id)}"
+            if lead and lead[0] == p.id:
+                info += f"   LEADING: {lead[1]} {int(lead[2] * 100)}%"
+            theme.text(surf, info, (rr.x + 18, rr.y + 50), 16, theme.GOLD if lead and lead[0] == p.id else theme.TEXT_DIM)
+            mems = diplomacy.memories_about(game, p.id, me.id, 2)
+            if mems:
+                txt = "They remember: " + "; ".join(f"you {m[2]} (M.Y. {game.year - (game.turn - m[0])})"
+                                                   for m in mems)
+                theme.text_block(surf, txt, (rr.x + 18, rr.y + 70, rr.width - 230, rr.height - 72), 15,
+                                 (190, 185, 160), 0)
+            if p.alive:
+                bx, by = rr.right - 196, rr.y + 6
+                buttons = []
+                if rel == "war":
+                    buttons.append(("Propose Peace", lambda p=p: self.peace(p)))
+                else:
+                    buttons.append(("Declare War", lambda p=p: self.war(p)))
+                    if rel == "peace":
+                        buttons.append(("Propose Pact", lambda p=p: self.pact(p)))
                     else:
-                        ui.button(surf, (rr.right - 170, rr.y + 20, 156, 30), "Propose Peace",
-                                  lambda p=p: self.peace(p))
-            y += 78
-        if hasattr(self, "result"):
-            theme.text(surf, self.result, (x, r.bottom - 34), 20, theme.GOLD)
+                        buttons.append(("End Pact", lambda p=p: diplomacy.cancel_pact(game, me.id, p.id)))
+                    buttons.append(("Trade Tech", lambda p=p: self.app.open_dialog(TradeDialog(self.app, p.id))))
+                    buttons.append(("Gift 50 cr", lambda p=p: self.gift(p)))
+                wide = len(buttons) == 1
+                for i, (label, cb) in enumerate(buttons):
+                    rect = (bx, by, 188, 26) if wide else (bx + (i % 2) * 96, by + (i // 2) * 30, 92, 26)
+                    ui.button(surf, rect, label, cb, size=15,
+                              enabled=not (label.startswith("Gift") and me.credits < 50))
+            y += row_h
+        if self.result:
+            theme.text(surf, self.result, (x, r.bottom - 30), 20, theme.GOLD)
+
+    def war(self, p):
+        self.game.declare_war(self.game.human_id, p.id)
+        self.result = f"You have declared war on the {p.name}."
 
     def peace(self, p):
-        if self.game.propose_peace(self.game.human_id, p.id):
-            self.result = f"{p.faction.leader} accepts your offer of peace."
+        ok, why = self.game.propose_peace(self.game.human_id, p.id)
+        self.result = (f"{p.faction.leader} accepts your offer of peace." if ok
+                       else f"{p.faction.leader} refuses: \"{why}\"")
+
+    def pact(self, p):
+        ok, why = diplomacy.will_accept_pact(self.game, p.id, self.game.human_id)
+        if ok:
+            diplomacy.form_pact(self.game, self.game.human_id, p.id)
+            self.result = f"{p.faction.leader} agrees. You now share maps and stand together."
         else:
-            self.result = f"{p.faction.leader} rejects your offer. \"Not while we are winning.\""
+            self.result = f"{p.faction.leader} declines: \"{why}\""
+
+    def gift(self, p):
+        diplomacy.gift(self.game, self.game.human_id, p.id, 50)
+        self.result = f"{p.faction.leader} gratefully accepts your gift."
+
+
+class TradeDialog(Dialog):
+    width, height = 900, 600
+
+    def __init__(self, app, other):
+        super().__init__(app)
+        self.other = other
+        self.result = ""
+        self.offer = None      # the tech of ours offered in a swap
+
+    @property
+    def title(self):
+        return f"Technology Trade - {self.game.players[self.other].name}"
+
+    def draw(self, surf, ui):
+        r = self.frame(surf, ui)
+        game = self.game
+        me, other = game.human_id, self.other
+        theirs = diplomacy.tradeable_techs(game, other, me)
+        mine = diplomacy.tradeable_techs(game, me, other)
+        x, y = r.x + 16, r.y + 50
+        colw = (r.width - 48) // 2
+        theme.text(surf, "Their technologies you could learn", (x, y), 20, theme.ACCENT, bold=True)
+        theme.text(surf, "Your technologies to offer in a swap", (x + colw + 16, y), 20, theme.ACCENT, bold=True)
+        y += 26
+        theme.text_block(surf, "Buy one outright, or pick one of yours on the right and swap.", (x, y, colw, 20), 16,
+                         theme.TEXT_DIM)
+        theme.text_block(surf, "Click to choose what you offer.", (x + colw + 16, y, colw, 20), 16, theme.TEXT_DIM)
+        y += 26
+        if not theirs:
+            theme.text(surf, "They know nothing you could use yet.", (x, y), 18, theme.TEXT_DIM)
+        for i, t in enumerate(theirs[:10]):
+            ry = y + i * 40
+            theme.panel(surf, (x, ry, colw, 36), theme.PANEL_LIGHT, None)
+            theme.text(surf, TECHS[t].name, (x + 8, ry + 9), 18, theme.TEXT, bold=True)
+            price, why = diplomacy.tech_price(game, other, me, t)
+            if price is None:
+                theme.text(surf, "not for sale", (x + colw - 170, ry + 10), 16, theme.WARN)
+            else:
+                ui.button(surf, (x + colw - 176, ry + 5, 84, 26), f"Buy {price}", lambda t=t, pr=price: self.buy(t, pr),
+                          enabled=game.human.credits >= price, size=15, tooltip=f"{price} credits")
+            ui.button(surf, (x + colw - 88, ry + 5, 80, 26), "Swap", lambda t=t: self.swap(t),
+                      enabled=self.offer is not None, size=15,
+                      tooltip="Offer the technology selected on the right in exchange for this one.")
+        for i, t in enumerate(mine[:10]):
+            ry = y + i * 40
+            ui.button(surf, (x + colw + 16, ry, colw, 36), TECHS[t].name, lambda t=t: setattr(self, "offer", t),
+                      selected=self.offer == t, size=18)
+        if not mine:
+            theme.text(surf, "You know nothing they lack.", (x + colw + 16, y), 18, theme.TEXT_DIM)
+        if self.result:
+            theme.text_block(surf, self.result, (x, r.bottom - 50, r.width - 32, 40), 19, theme.GOLD)
+
+    def buy(self, tech, price):
+        diplomacy.sell_tech(self.game, self.other, self.game.human_id, tech, price)
+        self.result = f"Purchased {TECHS[tech].name}."
+
+    def swap(self, tech):
+        ok, why = diplomacy.will_swap(self.game, self.other, self.game.human_id, tech, self.offer)
+        leader = self.game.players[self.other].faction.leader
+        if ok:
+            diplomacy.swap_techs(self.game, self.other, self.game.human_id, tech, self.offer)
+            self.result = f"{leader} agrees: {TECHS[tech].name} for {TECHS[self.offer].name}."
+            self.offer = None
+        else:
+            self.result = f"{leader} refuses: \"{why}\""
+
+
+class ProposalDialog(Dialog):
+    """Offers from AI factions that need the player's answer."""
+    width, height = 640, 320
+    title = "A Message Arrives"
+
+    def draw(self, surf, ui):
+        game = self.game
+        if not game.proposals:
+            self.close()
+            return
+        prop = game.proposals[0]
+        r = self.frame(surf, ui)
+        p = game.players[prop["from"]]
+        pygame.draw.rect(surf, p.color, (r.x + 16, r.y + 52, 8, 150))
+        theme.text(surf, p.faction.leader, (r.x + 36, r.y + 52), 24, p.color, bold=True)
+        theme.text(surf, p.name, (r.x + 36, r.y + 78), 18, theme.TEXT_DIM)
+        theme.text_block(surf, diplomacy.describe_proposal(game, prop), (r.x + 36, r.y + 110, r.width - 60, 90), 20,
+                         theme.TEXT)
+        word, wcol = diplomacy.attitude_word(diplomacy.attitude(game, p.id, game.human_id))
+        theme.text(surf, f"Their attitude towards you: {word}", (r.x + 36, r.y + 200), 17, wcol)
+        ui.button(surf, (r.x + 36, r.bottom - 56, 160, 38), "Accept", lambda: self.answer(prop, True))
+        ui.button(surf, (r.x + 212, r.bottom - 56, 160, 38), "Decline", lambda: self.answer(prop, False))
+        if len(game.proposals) > 1:
+            theme.text(surf, f"{len(game.proposals) - 1} more waiting", (r.right - 170, r.bottom - 46), 17,
+                       theme.TEXT_DIM)
+
+    def answer(self, prop, accept):
+        diplomacy.resolve_proposal(self.game, prop, accept)
+        if not self.game.proposals:
+            self.close()
+
+    def on_key(self, event):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -779,7 +929,7 @@ MOUSE: Left-click a unit to select it, left-click your base to open it. Right-cl
 
 MOVEMENT: Arrow keys or numpad 1-9 move the selected unit (Home/PgUp/End/PgDn for diagonals). Moving into an enemy attacks it.
 
-UNIT ORDERS: B found base (Colony Pod) | H hold/fortify | L sentry | Space skip turn | W wait | E explore | G go-to (then click) | C centre | Tab next unit | Delete disband.
+UNIT ORDERS: B found base (Colony Pod) | H hold/fortify | L sentry | Space skip turn | W wait | E explore | G go-to (then click) | C centre | Tab next unit | O board a transport in port | Delete disband.
 
 FORMERS: F farm | M mine | S solar collector | R road | N plant forest | X remove fungus | A automate.
 

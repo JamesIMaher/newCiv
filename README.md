@@ -31,10 +31,10 @@ python tools/simulate.py --seed 3 --turns 300 --ai 4   # all-AI game, prints pro
 | **Bases** | Population, nutrients/growth, minerals/production, energy. Citizens are auto-assigned to the 21-tile radius by a governor focus (balanced/growth/production/energy). Drones and riots, population caps, unit support costs, inefficiency by distance from HQ, rush-buying, energy stockpiling. |
 | **Economy** | Energy is split between Economy / Psych / Labs sliders. Facilities have upkeep. Early "planetary restrictions" cap tile yields at 2 until the right techs. |
 | **Technology** | 33 techs across 5 eras (Landfall → Transcendence). Cost rises with techs known and drops if contacted factions already know the tech. |
-| **Units** | 14 unit types: colony pods, formers, land/sea military, transports (with boarding/unloading). Morale levels, HP, fortification, terrain defense, stack-kill outside bases, base capture. |
+| **Units** | 14 unit types: colony pods, formers, land/sea military, transports (with boarding/unloading). Morale levels, HP, fortification, terrain defense, stack-kill outside bases, base capture. Land units board transports at sea or in port (O). |
 | **Terraforming** | Farms, mines, solar collectors, roads, forests, fungus removal. Formers can be automated. |
 | **Native life** | Xenoworms spawn from fungus. Fights with them use psi combat, which ignores weapons and armor. |
-| **Diplomacy** | Contact, peace, and war. AI factions declare war based on aggression and relative strength, and consider peace offers. |
+| **Diplomacy** | Peace, war and pacts (shared maps, allies join wars). Factions have attitudes towards each other with remembered reasons (wars, broken pacts, captured bases, gifts, trades, shared enemies, border friction). Tech trading and buying, gifts, and AI offers to the player. |
 | **Secret projects** | 8 world wonders, including the Ascension Engine. |
 | **Victory** | Conquest or Transcendence (research *Transcendence* and complete the *Ascension Engine*). Victory conditions are pluggable (`game/victory.py`). |
 | **Learning the world** | Datalinks encyclopedia (F6) covering rules, resources, terrain, units, facilities, projects, techs and factions. Tooltips on most things; resources shown as leaf/crystal/bolt icons with names. The base screen explains what each option would do *in that base*. Discovery pop-ups include flavour quotes. |
@@ -65,6 +65,8 @@ game/              rules engine; no pygame, fully testable headless
   entities.py      Player, Base, Unit
   game.py          the rules: yields, growth, production, movement, combat, research, turn processing
   ai.py            computer players, native life, and automation for human units
+  ai_military.py   AI war planning: strike forces, sieges, naval invasions
+  diplomacy.py     attitudes & memory, pacts, trades, AI offers, victory-race awareness
   pathfinding.py   A* / flood fill on the wrapped map
   victory.py       pluggable victory conditions
 ui/                pygame front-end (app loop, map renderer, dialogs, widgets; describe.py builds tooltips/info text)
@@ -80,4 +82,4 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design direction:
 - **Ideological Ascendancy** victory: influence pressure, ideology adoption, and legacy works.
 - **Game phases past the stars:** the planet awakens as an actor, then orbital/star-system map layers, then deeper
   eras and a multi-milestone Transcendence.
-- **Smarter AI** (next): naval invasions, coordinated task forces, trades/pacts/grudges, and victory awareness.
+- **Smarter AI** (first pass done): war planning, massed strike forces and sieges, naval invasions, pacts/trades/grudges, and ganging up on a runaway leader.
